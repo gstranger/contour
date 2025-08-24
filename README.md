@@ -1,6 +1,6 @@
-# vecnet-wasm
+# contour
 
-Minimal Rust + WASM library for vector networks (undirected graphs) targeting the browser.
+Minimal Rust + WASM library for Figma‑style vector networks (undirected graphs) targeting the browser.
 
 It exposes a small API to JavaScript for creating a graph, connecting nodes, listing neighbors, and computing shortest paths (BFS).
 
@@ -11,10 +11,10 @@ It exposes a small API to JavaScript for creating a graph, connecting nodes, lis
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack
 
-# 2) Build the WASM bundle (from vecnet-wasm/)
+# 2) Build the WASM bundle (from contour/)
 wasm-pack build --target web
 
-# 3) Serve statically (from vecnet-wasm/)
+# 3) Serve statically (from contour/)
 python3 -m http.server
 
 # 4) Open the demo in your browser
@@ -31,7 +31,7 @@ This produces a `pkg/` folder with JS/WASM bindings that the demo imports.
 
 ## Build
 
-From the project root (`vecnet-wasm/`):
+From the project root (`contour/`):
 
 ```bash
 wasm-pack build --target web
@@ -57,7 +57,7 @@ You can also run them in a non-headless browser by omitting `--headless`.
 
 ## Run the demo
 
-Serve the folder via any static file server (so the browser can fetch the WASM file). For example, from `vecnet-wasm/`:
+Serve the folder via any static file server (so the browser can fetch the WASM file). For example, from `contour/`:
 
 ```bash
 python3 -m http.server
@@ -92,5 +92,5 @@ Demo controls:
 ## Notes
 
 - The crate is built as a `cdylib` for WebAssembly and uses `wasm-bindgen` for bindings.
-- The simple web demo imports from `./pkg/vecnet_wasm.js`, which is created by `wasm-pack`.
+- The simple web demo imports from `./pkg/contour.js`, which is created by `wasm-pack`.
 - JSON `to_json` now includes `version` and `fills` arrays; `from_json` reads them.

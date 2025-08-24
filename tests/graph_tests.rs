@@ -1,5 +1,5 @@
 use wasm_bindgen_test::*;
-use vecnet_wasm::Graph;
+use contour::Graph;
 use js_sys::{Reflect, Uint32Array, Float32Array};
 use wasm_bindgen::JsValue;
 use serde::Deserialize;

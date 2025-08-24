@@ -1,7 +1,7 @@
 use wasm_bindgen::prelude::*;
 use js_sys::{Float32Array, Object, Uint32Array, Uint8Array, Reflect};
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct Color { r: u8, g: u8, b: u8, a: u8 }
@@ -906,6 +906,105 @@ impl Graph {
             }
         }
         self.geom_ver = self.geom_ver.wrapping_add(1);
+    }
+
+    /// Translate a set of nodes by (dx, dy). Returns number of nodes moved.
+    pub fn translate_nodes(&mut self, node_ids: &Uint32Array, dx: f32, dy: f32) -> u32 {
+        let ids: Vec<u32> = node_ids.to_vec();
+        if ids.is_empty() { return 0; }
+        let set: HashSet<u32> = ids.into_iter().collect();
+        let mut moved = 0u32;
+        for (i, n) in self.nodes.iter_mut().enumerate() {
+            if set.contains(&(i as u32)) {
+                if let Some(nn) = n.as_mut() {
+                    nn.x += dx; nn.y += dy; moved += 1;
+                }
+            }
+        }
+        if moved > 0 { self.geom_ver = self.geom_ver.wrapping_add(1); }
+        moved
+    }
+
+    /// Translate all nodes incident to the given edges by (dx, dy).
+    /// When `split_shared` is true, nodes that are shared with edges not in `edge_ids`
+    /// are duplicated and the grouped edges are rewired to the duplicates before moving.
+    /// Returns number of nodes moved.
+    pub fn translate_edges(&mut self, edge_ids: &Uint32Array, dx: f32, dy: f32, split_shared: bool) -> u32 {
+        let eids_vec: Vec<u32> = edge_ids.to_vec();
+        if eids_vec.is_empty() { return 0; }
+        let edge_set: HashSet<u32> = eids_vec.iter().copied().collect();
+
+        // Gather nodes touched by the edge set
+        let mut nodes_in_group: HashSet<u32> = HashSet::new();
+        for (i, e) in self.edges.iter().enumerate() {
+            let id = i as u32;
+            if !edge_set.contains(&id) { continue; }
+            if let Some(edge) = e.as_ref() {
+                nodes_in_group.insert(edge.a);
+                nodes_in_group.insert(edge.b);
+            }
+        }
+        if nodes_in_group.is_empty() { return 0; }
+
+        // If requested, split nodes that are shared with outside edges
+        let mut split_map: HashMap<u32, u32> = HashMap::new(); // old_node -> new_node
+        if split_shared {
+            // Determine which nodes are incident to any edge not in the set
+            let mut shared: HashSet<u32> = HashSet::new();
+            for (i, e) in self.edges.iter().enumerate() {
+                let id = i as u32;
+                if let Some(edge) = e.as_ref() {
+                    if nodes_in_group.contains(&edge.a) && !edge_set.contains(&id) { shared.insert(edge.a); }
+                    if nodes_in_group.contains(&edge.b) && !edge_set.contains(&id) { shared.insert(edge.b); }
+                }
+            }
+            // Create duplicates for shared nodes
+            for n_id in shared.iter().copied() {
+                if let Some(Some(n)) = self.nodes.get(n_id as usize) {
+                    let new_id = self.nodes.len() as u32;
+                    self.nodes.push(Some(Node { x: n.x, y: n.y }));
+                    split_map.insert(n_id, new_id);
+                }
+            }
+            // Rewire grouped edges to use duplicated nodes where applicable
+            if !split_map.is_empty() {
+                for (i, e) in self.edges.iter_mut().enumerate() {
+                    let id = i as u32;
+                    if !edge_set.contains(&id) { continue; }
+                    if let Some(edge) = e.as_mut() {
+                        if let Some(&na) = split_map.get(&edge.a) { edge.a = na; }
+                        if let Some(&nb) = split_map.get(&edge.b) { edge.b = nb; }
+                    }
+                }
+                // Update nodes_in_group to include duplicates and remove originals where rewired
+                for (old, new_) in split_map.iter() {
+                    if nodes_in_group.contains(old) {
+                        nodes_in_group.insert(*new_);
+                    }
+                }
+            }
+        }
+
+        // Recompute the final set of nodes to move: endpoints of edges in the set after rewiring
+        let mut nodes_to_move: HashSet<u32> = HashSet::new();
+        for (i, e) in self.edges.iter().enumerate() {
+            let id = i as u32;
+            if !edge_set.contains(&id) { continue; }
+            if let Some(edge) = e.as_ref() {
+                nodes_to_move.insert(edge.a);
+                nodes_to_move.insert(edge.b);
+            }
+        }
+
+        // Apply translation
+        let mut moved = 0u32;
+        for nid in nodes_to_move.iter() {
+            if let Some(Some(n)) = self.nodes.get_mut(*nid as usize) {
+                n.x += dx; n.y += dy; moved += 1;
+            }
+        }
+        if moved > 0 { self.geom_ver = self.geom_ver.wrapping_add(1); }
+        moved
     }
 }
 

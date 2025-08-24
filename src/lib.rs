@@ -929,6 +929,19 @@ impl Graph {
     // === SVG import/export (MVP) ===
     /// Append geometry from an SVG path `d` (supports M/m, L/l, C/c, Z/z). Returns number of edges added.
     pub fn add_svg_path(&mut self, d: &str) -> u32 {
+        crate::svg::add_svg_path_impl(self, d)
+    }
+
+    /// Append geometry from an SVG path with a stroke style applied to created edges.
+    /// Returns number of edges added.
+    pub fn add_svg_path_with_style(&mut self, d: &str, r: u8, g: u8, b: u8, a: u8, width: f32) -> u32 {
+        crate::svg::add_svg_path_with_style_impl(self, d, Some((r,g,b,a,width)))
+    }
+
+    /// Export edges as independent SVG path fragments (M/L or M/C). Returns JS array of strings.
+    pub fn to_svg_paths(&self) -> JsValue { crate::svg::to_svg_paths_impl(self) }
+
+    /*
         let mut i = 0usize;
         let bytes = d.as_bytes();
         let mut cur = (0.0f32, 0.0f32);

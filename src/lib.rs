@@ -2,38 +2,11 @@ use wasm_bindgen::prelude::*;
 use js_sys::{Float32Array, Object, Uint32Array, Uint8Array, Reflect};
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, HashSet};
+mod geometry;
+mod model;
+use crate::model::{Color, FillState, Node, HandleMode, Vec2, EdgeKind, Edge};
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-struct Color { r: u8, g: u8, b: u8, a: u8 }
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-struct FillState { filled: bool, color: Option<Color> }
-
-#[derive(Clone, Copy, Debug)]
-struct Node { x: f32, y: f32 }
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-enum HandleMode { Free = 0, Mirrored = 1, Aligned = 2 }
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-struct Vec2 { x: f32, y: f32 }
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-enum EdgeKind {
-    Line,
-    Cubic { ha: Vec2, hb: Vec2, mode: HandleMode },
-    Polyline { points: Vec<Vec2> }, // intermediate absolute points between a and b
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct Edge {
-    a: u32,
-    b: u32,
-    kind: EdgeKind,
-    // Optional stroke style for rendering
-    stroke: Option<Color>,
-    stroke_width: f32,
-}
+// Types moved to model.rs
 
 #[wasm_bindgen]
 pub struct Graph {
@@ -629,30 +602,41 @@ impl Graph {
                     for (eid_idx, e) in self.edges.iter().enumerate() {
                         if let Some(e) = e {
                             if (e.a == u && e.b == v) || (e.a == v && e.b == u) {
-                                match e.kind {
-                                    EdgeKind::Line => {
-                                        // push endpoint v
-                                        if poly.is_empty() { poly.push(Vec2 { x: nu.x, y: nu.y }); }
-                                        poly.push(Vec2 { x: nv.x, y: nv.y });
-                                    }
-                                    EdgeKind::Cubic { ha, hb, .. } => {
-                                        // flatten along the curve from u->v in correct direction
-                                        let (ax, ay, bx, by, p1x, p1y, p2x, p2y) = if e.a == u {
-                                            (nu.x, nu.y, nv.x, nv.y, nu.x + ha.x, nu.y + ha.y, nv.x + hb.x, nv.y + hb.y)
-                                        } else {
-                                            (nv.x, nv.y, nu.x, nu.y, nv.x + hb.x, nv.y + hb.y, nu.x + ha.x, nu.y + ha.y)
-                                        };
-                                        if poly.is_empty() { poly.push(Vec2 { x: ax, y: ay }); }
-                                        let mut pts: Vec<Vec2> = Vec::new();
-                                        flatten_cubic(&mut pts, ax, ay, p1x, p1y, p2x, p2y, bx, by, self.flatten_tol, 0);
-                                        for p in pts { poly.push(p); }
-                                    }
-                                }
-                                added_any = true;
-                                if edge_seq.last().copied() != Some(eid_idx as u32) { edge_seq.push(eid_idx as u32); }
-                                break;
-                            }
+                match &e.kind {
+                    EdgeKind::Line => {
+                        // push endpoint v
+                        if poly.is_empty() { poly.push(Vec2 { x: nu.x, y: nu.y }); }
+                        poly.push(Vec2 { x: nv.x, y: nv.y });
+                    }
+                    EdgeKind::Cubic { ha, hb, .. } => {
+                        // flatten along the curve from u->v in correct direction
+                        let (ax, ay, bx, by, p1x, p1y, p2x, p2y) = if e.a == u {
+                            (nu.x, nu.y, nv.x, nv.y, nu.x + ha.x, nu.y + ha.y, nv.x + hb.x, nv.y + hb.y)
+                        } else {
+                            (nv.x, nv.y, nu.x, nu.y, nv.x + hb.x, nv.y + hb.y, nu.x + ha.x, nu.y + ha.y)
+                        };
+                        if poly.is_empty() { poly.push(Vec2 { x: ax, y: ay }); }
+                        let mut pts: Vec<Vec2> = Vec::new();
+                        flatten_cubic(&mut pts, ax, ay, p1x, p1y, p2x, p2y, bx, by, self.flatten_tol, 0);
+                        for p in pts { poly.push(p); }
+                    }
+                    EdgeKind::Polyline { points } => {
+                        // Follow intermediate points in correct direction
+                        if poly.is_empty() { poly.push(Vec2 { x: nu.x, y: nu.y }); }
+                        if e.a == u {
+                            for p in points.iter() { poly.push(Vec2 { x: p.x, y: p.y }); }
+                            poly.push(Vec2 { x: nv.x, y: nv.y });
+                        } else {
+                            poly.push(Vec2 { x: nv.x, y: nv.y });
+                            for p in points.iter().rev() { poly.push(Vec2 { x: p.x, y: p.y }); }
                         }
+                    }
+                }
+                added_any = true;
+                if edge_seq.last().copied() != Some(eid_idx as u32) { edge_seq.push(eid_idx as u32); }
+                break;
+            }
+        }
                     }
                     if !added_any {
                         // fallback straight segment
@@ -795,6 +779,7 @@ impl Graph {
             match edge.kind {
                 EdgeKind::Cubic { ha: _ha, hb: _hb, mode: m } => { ha = _ha; hb = _hb; mode = m; }
                 EdgeKind::Line => { return false; }
+                EdgeKind::Polyline { .. } => { return false; }
             }
             if end == 0 {
                 ha = Vec2 { x: x - a.x, y: y - a.y };
@@ -832,7 +817,7 @@ impl Graph {
 
     pub fn set_handle_mode(&mut self, id: u32, mode: u8) -> bool {
         if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
-            let (ha, hb) = match edge.kind { EdgeKind::Cubic { ha, hb, .. } => (ha, hb), EdgeKind::Line => return false };
+            let (ha, hb) = match edge.kind { EdgeKind::Cubic { ha, hb, .. } => (ha, hb), EdgeKind::Line => return false, EdgeKind::Polyline { .. } => return false };
             let new_mode = match mode { 1 => HandleMode::Mirrored, 2 => HandleMode::Aligned, _ => HandleMode::Free };
             edge.kind = EdgeKind::Cubic { ha, hb, mode: new_mode };
             self.geom_ver = self.geom_ver.wrapping_add(1);
@@ -848,7 +833,7 @@ impl Graph {
             let a = match self.nodes.get(edge.a as usize).and_then(|n| *n) { Some(n) => n, None => return false };
             let b = match self.nodes.get(edge.b as usize).and_then(|n| *n) { Some(n) => n, None => return false };
 
-            // Ensure cubic
+            // Ensure cubic for bend on lines; do not bend polylines
             if let EdgeKind::Line = edge.kind {
                 // initialize default handles ~30% along the line
                 let dx = b.x - a.x; let dy = b.y - a.y;
@@ -911,6 +896,7 @@ impl Graph {
                     return true;
                 }
             }
+            // For polylines, bending is not supported
         }
         false
     }
@@ -1411,7 +1397,7 @@ impl Graph {
             if let Some(edge) = e {
                 let a = match self.nodes.get(edge.a as usize).and_then(|n| *n) { Some(n) => n, None => continue };
                 let b = match self.nodes.get(edge.b as usize).and_then(|n| *n) { Some(n) => n, None => continue };
-                match edge.kind {
+                match &edge.kind {
                     EdgeKind::Line => {
                         paths.push(format!("M {} {} L {} {}", a.x, a.y, b.x, b.y));
                     }
@@ -1419,6 +1405,12 @@ impl Graph {
                         let p1x = a.x + ha.x; let p1y = a.y + ha.y;
                         let p2x = b.x + hb.x; let p2y = b.y + hb.y;
                         paths.push(format!("M {} {} C {} {}, {} {}, {} {}", a.x, a.y, p1x, p1y, p2x, p2y, b.x, b.y));
+                    }
+                    EdgeKind::Polyline { points } => {
+                        let mut d = format!("M {} {}", a.x, a.y);
+                        for p in points { d.push_str(&format!(" L {} {}", p.x, p.y)); }
+                        d.push_str(&format!(" L {} {}", b.x, b.y));
+                        paths.push(d);
                     }
                 }
             }

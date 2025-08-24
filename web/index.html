@@ -23,15 +23,20 @@
         Fill tool: toggle with <code>F</code> (click region to toggle fill).
         Undo: Ctrl/Cmd+Z. Redo: Shift+Ctrl/Cmd+Z.
       </div>
-      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-        <button id="saveBtn">Save</button>
-        <button id="loadBtn">Load</button>
-        <button id="clearBtn">Clear</button>
-        <button id="importBtn" title="Import an SVG file">Import SVG</button>
-        <input id="importSvgInput" type="file" accept=".svg,image/svg+xml" style="display:none" />
-        <button id="bucketBtn" title="Toggle paint bucket (F)">Bucket</button>
-        <button id="bendBtn" title="Toggle bend tool (B)">Bend</button>
-        <button id="refBtn" title="Toggle reference SVG overlay (R)">Ref SVG</button>
+      <div style="margin-top:8px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+        <div id="toolbar" style="display:flex; gap:6px; align-items:center; border:1px solid #e2e2e2; border-radius:8px; padding:6px; background:#fff;">
+          <button id="penBtn" title="Pen tool (P)">Pen</button>
+          <button id="bendBtn" title="Toggle bend tool (B)">Bend</button>
+          <button id="bucketBtn" title="Toggle paint bucket (F)">Bucket</button>
+          <button id="refBtn" title="Toggle reference SVG overlay (R)">Ref</button>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="saveBtn">Save</button>
+          <button id="loadBtn">Load</button>
+          <button id="clearBtn">Clear</button>
+          <button id="importBtn" title="Import an SVG file">Import SVG</button>
+          <input id="importSvgInput" type="file" accept=".svg,image/svg+xml" style="display:none" />
+        </div>
         <span class="hint" id="snapLabel"></span>
         <span class="hint" id="modeLabel"></span>
       </div>
@@ -55,7 +60,7 @@
       await init();
 
       const g = new Graph();
-      // If saved doc exists, load it; otherwise seed a sample
+      // If saved doc exists, load it
       let loaded = false;
       try {
         // Prefer new key; fallback to legacy for backward compatibility
@@ -66,17 +71,7 @@
         // Migrate legacy key to new key after successful load
         if (loaded && savedOld) { try { localStorage.setItem('contour_doc', savedOld); } catch {} }
       } catch (e) { console.warn('Load failed', e); }
-      if (!loaded || g.node_count() === 0) {
-        // Seed a closed loop (square) to demonstrate fills
-        const n0 = g.add_node(120, 120);
-        const n1 = g.add_node(360, 120);
-        const n2 = g.add_node(360, 300);
-        const n3 = g.add_node(120, 300);
-        g.add_edge(n0, n1);
-        g.add_edge(n1, n2);
-        g.add_edge(n2, n3);
-        g.add_edge(n3, n0);
-      }
+      // Start empty by default (no seeded geometry)
 
       const canvas = document.getElementById('canvas');
       const ctx = canvas.getContext('2d');
@@ -90,11 +85,14 @@
         history: [],     // undo stack
         redo: [],        // redo stack
         snap: true,
+        pen: false,
         bucket: false,
         regionsVersion: 0,
         regions: [],
         bend: false,
         bending: null, // { edge, t }
+        penPath: null, // { startId, lastId }
+        penPreview: null, // [x,y]
         edgeStyle: {}, // fallback JS-side style map: id -> { color:[r,g,b,a], width }
         svgStrokes: [], // [{ d, color:[r,g,b,a], width, cap, join }]
         showRef: false,
@@ -108,11 +106,12 @@
       }
       function updateModeLabel() {
         let mode = 'Select/Drag';
-        if (state.bucket) mode = 'Bucket'; else if (state.bend) mode = 'Bend';
+        if (state.pen) mode = 'Pen'; else if (state.bucket) mode = 'Bucket'; else if (state.bend) mode = 'Bend';
         modeLabel.textContent = 'Mode: ' + mode;
-        canvas.style.cursor = state.bucket ? 'cell' : (state.bend ? 'crosshair' : 'default');
+        canvas.style.cursor = state.bucket ? 'cell' : (state.bend ? 'crosshair' : (state.pen ? 'crosshair' : 'default'));
         document.getElementById('bucketBtn').classList.toggle('active', state.bucket);
         const bendBtn = document.getElementById('bendBtn'); if (bendBtn) bendBtn.classList.toggle('active', state.bend);
+        const penBtn = document.getElementById('penBtn'); if (penBtn) penBtn.classList.toggle('active', state.pen);
       }
       updateSnapLabel();
       updateModeLabel();
@@ -338,6 +337,23 @@
           if (start) {
             const [sx, sy] = start;
             const [cx, cy] = state.connecting.cur;
+            ctx.beginPath();
+            ctx.moveTo(sx, sy);
+            ctx.lineTo(cx, cy);
+            ctx.strokeStyle = '#ff9800';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 6]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        }
+
+        // Pen tool rubber band
+        if (state.pen && state.penPath && state.penPreview) {
+          const last = g.get_node(state.penPath.lastId);
+          if (last) {
+            const [sx, sy] = [last[0], last[1]];
+            const [cx, cy] = state.penPreview;
             ctx.beginPath();
             ctx.moveTo(sx, sy);
             ctx.lineTo(cx, cy);
@@ -576,6 +592,41 @@
 
       canvas.addEventListener('mousedown', (evt) => {
         const [x, y] = canvasPoint(evt);
+        // Pen tool interactions
+        if (state.pen) {
+          const [sx, sy] = snapPoint(x, y, null);
+          const pickP = g.pick(sx, sy, 8);
+          if (!state.penPath) {
+            // Start path
+            if (pickP && pickP.kind === 'node') {
+              const id = pickP.id >>> 0;
+              state.penPath = { startId: id, lastId: id };
+            } else {
+              const nid = g.add_node(sx, sy);
+              state.penPath = { startId: nid, lastId: nid };
+            }
+            state.penPreview = [sx, sy];
+            render();
+            return;
+          } else {
+            // Extend path
+            let targetId = null;
+            if (pickP && pickP.kind === 'node') {
+              targetId = pickP.id >>> 0;
+            } else {
+              targetId = g.add_node(sx, sy);
+            }
+            if (targetId != null && targetId !== state.penPath.lastId) {
+              g.add_edge(state.penPath.lastId, targetId);
+              state.penPath.lastId = targetId;
+              scheduleRegions();
+            }
+            state.penPreview = [sx, sy];
+            render();
+            return;
+          }
+        }
+        
         const pick = g.pick(x, y, 10);
         if (state.bend && pick && pick.kind === 'edge') {
           state.bending = { edge: pick.id >>> 0, t: pick.t ?? 0.5 };
@@ -628,6 +679,12 @@
 
       window.addEventListener('mousemove', (evt) => {
         const [x, y] = canvasPoint(evt);
+        if (state.pen && state.penPath) {
+          const [sx, sy] = snapPoint(x, y, null);
+          state.penPreview = [sx, sy];
+          render();
+          return;
+        }
         if (state.bending) {
           const { edge, t } = state.bending;
           const [sx, sy] = snapPoint(x, y, null);
@@ -741,9 +798,16 @@
         } else if (evt.key.toLowerCase() === 's') {
           state.snap = !state.snap; updateSnapLabel(); render();
         } else if (evt.key.toLowerCase() === 'f') {
-          state.bucket = !state.bucket; updateModeLabel(); render();
+          state.bucket = !state.bucket; if (state.bucket) { state.pen = false; state.bend = false; } updateModeLabel(); render();
         } else if (evt.key.toLowerCase() === 'b') {
-          state.bend = !state.bend; updateModeLabel();
+          state.bend = !state.bend; if (state.bend) { state.pen = false; state.bucket = false; } updateModeLabel(); render();
+        } else if (evt.key.toLowerCase() === 'p') {
+          state.pen = !state.pen; if (state.pen) { state.bend = false; state.bucket = false; } else { state.penPath = null; state.penPreview = null; }
+          updateModeLabel(); render();
+        } else if (evt.key === 'Enter') {
+          if (state.pen && state.penPath) { state.penPath = null; state.penPreview = null; render(); }
+        } else if (evt.key === 'Escape') {
+          if (state.pen && state.penPath) { state.penPath = null; state.penPreview = null; render(); }
         } else if (evt.key.toLowerCase() === 'r') {
           const refBtn = document.getElementById('refBtn');
           state.showRef = !state.showRef; if (refBtn) refBtn.classList.toggle('active', state.showRef); render();
@@ -783,8 +847,25 @@
         }
       });
 
-      // Double-click to add a node at the cursor (snapped)
+      // Double-click: finish pen path (optionally close if near start)
       canvas.addEventListener('dblclick', (evt) => {
+        if (state.pen && state.penPath) {
+          const [x, y] = canvasPoint(evt);
+          const [sx, sy] = snapPoint(x, y, null);
+          const start = g.get_node(state.penPath.startId);
+          const last = g.get_node(state.penPath.lastId);
+          if (start && last) {
+            const dx = sx - start[0]; const dy = sy - start[1];
+            const close = (dx*dx + dy*dy) <= 12*12;
+            if (close && state.penPath.lastId !== state.penPath.startId) {
+              g.add_edge(state.penPath.lastId, state.penPath.startId);
+              scheduleRegions();
+            }
+          }
+          state.penPath = null; state.penPreview = null; render();
+          return;
+        }
+        // Legacy: add node on double click when not in pen mode
         const [x, y] = canvasPoint(evt);
         const [sx, sy] = snapPoint(x, y, null);
         g.add_node(sx, sy);
@@ -1169,11 +1250,13 @@
         reader.readAsText(file);
       });
 
+      const penBtn = document.getElementById('penBtn');
+      if (penBtn) penBtn.addEventListener('click', () => { state.pen = !state.pen; if (state.pen) { state.bend = false; state.bucket = false; } else { state.penPath = null; state.penPreview = null; } updateModeLabel(); render(); });
       document.getElementById('bucketBtn').addEventListener('click', () => {
-        state.bucket = !state.bucket; updateModeLabel(); render();
+        state.bucket = !state.bucket; if (state.bucket) { state.pen = false; state.bend = false; } updateModeLabel(); render();
       });
       document.getElementById('bendBtn').addEventListener('click', () => {
-        state.bend = !state.bend; updateModeLabel();
+        state.bend = !state.bend; if (state.bend) { state.pen = false; state.bucket = false; } updateModeLabel(); render();
       });
       const refBtn = document.getElementById('refBtn');
       if (refBtn) {

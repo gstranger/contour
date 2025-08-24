@@ -1,0 +1,998 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>vecnet-wasm demo</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; }
+      header { padding: 12px 16px; border-bottom: 1px solid #ddd; }
+      #stage { flex: 1; position: relative; background: #fff; }
+      canvas { width: 100%; height: 100%; display: block; background: #fafafa; }
+      .hint { color: #666; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div><strong>vecnet-wasm</strong> — MVP 3 (fills + paint bucket)</div>
+      <div class="hint">
+        Build with <code>wasm-pack build --target web</code>.
+        Drag nodes. Connect: Alt+drag from node to node. 
+        Snap: toggle with <code>S</code> (grid+nodes). 
+        Fill tool: toggle with <code>F</code> (click region to toggle fill).
+        Undo: Ctrl/Cmd+Z. Redo: Shift+Ctrl/Cmd+Z.
+      </div>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <button id="saveBtn">Save</button>
+        <button id="loadBtn">Load</button>
+        <button id="clearBtn">Clear</button>
+        <button id="importBtn" title="Import an SVG file">Import SVG</button>
+        <input id="importSvgInput" type="file" accept=".svg,image/svg+xml" style="display:none" />
+        <button id="bucketBtn" title="Toggle paint bucket (F)">Bucket</button>
+        <button id="bendBtn" title="Toggle bend tool (B)">Bend</button>
+        <button id="refBtn" title="Toggle reference SVG overlay (R)">Ref SVG</button>
+        <span class="hint" id="snapLabel"></span>
+        <span class="hint" id="modeLabel"></span>
+      </div>
+    </header>
+    <div id="main" style="flex:1; display:flex; min-height:0;">
+      <div id="stage" style="flex:1; position:relative; background:#fff; min-width:0;">
+        <canvas id="canvas"></canvas>
+      </div>
+      <aside id="sidebar" style="width:260px; border-left:1px solid #ddd; overflow:auto; background:#fafbfc;">
+        <div style="padding:8px 10px; border-bottom:1px solid #eee; font-weight:600;">Objects</div>
+        <div id="objList" style="padding:8px; display:flex; flex-direction:column; gap:8px;"></div>
+      </aside>
+    </div>
+
+    <script type="module">
+      import init, { Graph } from "../pkg/vecnet_wasm.js";
+      await init();
+
+      const g = new Graph();
+      // If saved doc exists, load it; otherwise seed a sample
+      let loaded = false;
+      try {
+        const saved = localStorage.getItem('vecnet_doc');
+        if (saved) {
+          loaded = g.from_json(JSON.parse(saved));
+        }
+      } catch (e) { console.warn('Load failed', e); }
+      if (!loaded || g.node_count() === 0) {
+        // Seed a closed loop (square) to demonstrate fills
+        const n0 = g.add_node(120, 120);
+        const n1 = g.add_node(360, 120);
+        const n2 = g.add_node(360, 300);
+        const n3 = g.add_node(120, 300);
+        g.add_edge(n0, n1);
+        g.add_edge(n1, n2);
+        g.add_edge(n2, n3);
+        g.add_edge(n3, n0);
+      }
+
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+
+      const state = {
+        selection: null, // { kind: 'node'|'edge', id }
+        dragging: null,  // { id, start:[x,y], orig:[x,y] }
+        connecting: null, // { startId, startPos:[x,y], cur:[x,y] }
+        hover: null,     // { kind, id }
+        hoverRegion: null, // { key, points }
+        history: [],     // undo stack
+        redo: [],        // redo stack
+        snap: true,
+        bucket: false,
+        regionsVersion: 0,
+        regions: [],
+        bend: false,
+        bending: null, // { edge, t }
+        edgeStyle: {}, // fallback JS-side style map: id -> { color:[r,g,b,a], width }
+        svgStrokes: [], // [{ d, color:[r,g,b,a], width, cap, join }]
+        showRef: false,
+        transform: { s: 1, tx: 0, ty: 0 },
+      };
+
+      const snapLabel = document.getElementById('snapLabel');
+      const modeLabel = document.getElementById('modeLabel');
+      function updateSnapLabel() {
+        snapLabel.textContent = state.snap ? 'Snap: ON' : 'Snap: OFF';
+      }
+      function updateModeLabel() {
+        let mode = 'Select/Drag';
+        if (state.bucket) mode = 'Bucket'; else if (state.bend) mode = 'Bend';
+        modeLabel.textContent = 'Mode: ' + mode;
+        canvas.style.cursor = state.bucket ? 'cell' : (state.bend ? 'crosshair' : 'default');
+        document.getElementById('bucketBtn').classList.toggle('active', state.bucket);
+        const bendBtn = document.getElementById('bendBtn'); if (bendBtn) bendBtn.classList.toggle('active', state.bend);
+      }
+      updateSnapLabel();
+      updateModeLabel();
+
+      function resizeCanvas() {
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+        canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        render();
+      }
+      window.addEventListener('resize', resizeCanvas);
+      resizeCanvas();
+      // Prime regions on load
+      (function(){
+        const regionsVal = g.get_regions();
+        try { state.regions = JSON.parse(JSON.stringify(regionsVal)); }
+        catch (e) { console.warn('regions normalize failed', e, regionsVal); state.regions = []; }
+        state.regionsVersion = g.geom_version();
+        render();
+      })();
+
+      function render() {
+        // Rebuild object list if geometry changed
+        try {
+          const gv = g.geom_version();
+          if (gv !== state.objectsVersion) { rebuildObjectList(); state.objectsVersion = gv; }
+        } catch {}
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Fills: draw behind edges
+        const regions = state.regions;
+        if (regions && Array.isArray(regions)) {
+          ctx.save();
+          for (const r of regions) {
+            if (!r.filled) continue;
+            const pts = r.points;
+            if (!pts || pts.length < 6) continue;
+            ctx.beginPath();
+            ctx.moveTo(pts[0], pts[1]);
+            for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i+1]);
+            ctx.closePath();
+            // Use per-region color if present; else fallback
+            if (r.color && r.color.length === 4) {
+              const [rr, gg, bb, aa] = r.color;
+              ctx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${Math.max(0, Math.min(1, aa/255))})`;
+            } else {
+              ctx.fillStyle = 'rgba(56, 139, 253, 0.15)';
+            }
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+
+        // If we have SVG stroke overlays and Ref mode is ON, draw them and return early
+        if (state.showRef && state.svgStrokes && state.svgStrokes.length > 0) {
+          ctx.save();
+          const t = state.transform || { s: 1, tx: 0, ty: 0 };
+          ctx.translate(t.tx, t.ty);
+          ctx.scale(t.s, t.s);
+          for (const s of state.svgStrokes) {
+            try {
+              const p = new Path2D(s.d);
+              const [rr,gg,bb,aa] = s.color;
+              ctx.strokeStyle = `rgba(${rr}, ${gg}, ${bb}, ${Math.max(0, Math.min(1, aa/255))})`;
+              ctx.lineWidth = s.width;
+              ctx.lineCap = s.cap || 'round';
+              ctx.lineJoin = s.join || 'round';
+              ctx.stroke(p);
+            } catch {}
+          }
+          ctx.restore();
+          return; // Skip engine edges/nodes to avoid masking the reference
+        }
+
+        // Edges (draw when reference overlay is off)
+        const e = g.get_edge_data();
+        const eids = e.ids; // Uint32Array
+        const ep = e.endpoints; // Uint32Array [a,b,...]
+        const kinds = e.kinds; // Uint8Array 0=line,1=cubic
+        const rgba = e.stroke_rgba; // Uint8Array (4 per edge) or undefined
+        const widths = e.stroke_widths; // Float32Array or undefined
+        ctx.lineWidth = 2;
+        for (let i = 0; i < eids.length; i++) {
+          const a = ep[i*2+0];
+          const b = ep[i*2+1];
+          const na = g.get_node(a);
+          const nb = g.get_node(b);
+          if (!na || !nb) continue;
+          const edgeId = eids[i];
+          const selected = state.selection && state.selection.kind === 'edge' && state.selection.id === edgeId;
+          const hovered = state.hover && state.hover.kind === 'edge' && state.hover.id === edgeId;
+          // Base stroke style from edge typed arrays (fast, reliable)
+          let baseColor = '#1f6feb';
+          let baseWidth = 2;
+          if (rgba && widths) {
+            const r = rgba[i*4+0] || 0;
+            const g2 = rgba[i*4+1] || 0;
+            const b2 = rgba[i*4+2] || 0;
+            const a2 = rgba[i*4+3] || 0;
+            const w2 = widths[i] || 0;
+            if (a2 > 0 && w2 > 0) {
+              baseColor = `rgba(${r}, ${g2}, ${b2}, ${Math.max(0, Math.min(1, a2/255))})`;
+              baseWidth = w2;
+            }
+          }
+          // Fallback: JS-side style map or get_edge_style if arrays indicate unset
+          if (baseWidth === 2 && baseColor === '#1f6feb') {
+            const jsStyle = state.edgeStyle && state.edgeStyle[edgeId];
+            if (jsStyle && jsStyle.color && jsStyle.color.length === 4) {
+              const [rr,gg,bb,aa] = jsStyle.color;
+              baseColor = `rgba(${rr}, ${gg}, ${bb}, ${Math.max(0, Math.min(1, aa/255))})`;
+              baseWidth = (typeof jsStyle.width === 'number' && jsStyle.width > 0) ? jsStyle.width : baseWidth;
+            } else if (typeof g.get_edge_style === 'function') {
+              try {
+                const stRaw = g.get_edge_style(edgeId);
+                let st = null; try { st = JSON.parse(JSON.stringify(stRaw)); } catch { st = stRaw; }
+                if (st && (Array.isArray(st) ? st.length >= 5 : (st[0] !== undefined && st[4] !== undefined))) {
+                  const rr = (Array.isArray(st) ? st[0] : st[0])|0;
+                  const gg3 = (Array.isArray(st) ? st[1] : st[1])|0;
+                  const bb3 = (Array.isArray(st) ? st[2] : st[2])|0;
+                  const aa3 = (Array.isArray(st) ? st[3] : st[3])|0;
+                  const ww = Array.isArray(st) ? st[4] : st[4];
+                  baseColor = `rgba(${rr}, ${gg3}, ${bb3}, ${Math.max(0, Math.min(1, aa3/255))})`;
+                  baseWidth = (typeof ww === 'number' && isFinite(ww) && ww > 0) ? ww : 2;
+                }
+              } catch {}
+            }
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(na[0], na[1]);
+          if (kinds[i] === 1) {
+            const handles = g.get_handles(edgeId);
+            if (handles) {
+              ctx.bezierCurveTo(handles[0], handles[1], handles[2], handles[3], nb[0], nb[1]);
+            } else {
+              ctx.lineTo(nb[0], nb[1]);
+            }
+          } else {
+            ctx.lineTo(nb[0], nb[1]);
+          }
+          // Match SVG defaults for strokes
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.strokeStyle = selected ? '#d73a49' : hovered ? '#2da44e' : baseColor;
+          ctx.lineWidth = selected ? Math.max(4, baseWidth * 1.6) : hovered ? Math.max(3, baseWidth * 1.3) : baseWidth;
+          ctx.stroke();
+        }
+
+        // Nodes
+        const n = g.get_node_data();
+        const nids = n.ids; // Uint32Array
+        const pos = n.positions; // Float32Array [x,y,...]
+        for (let i = 0; i < nids.length; i++) {
+          const id = nids[i];
+          const x = pos[i*2+0];
+          const y = pos[i*2+1];
+          const selected = state.selection && state.selection.kind === 'node' && state.selection.id === id;
+          const hovered = state.hover && state.hover.kind === 'node' && state.hover.id === id;
+          ctx.beginPath();
+          ctx.arc(x, y, selected ? 6 : hovered ? 5 : 4, 0, Math.PI * 2);
+          ctx.fillStyle = selected ? '#d73a49' : hovered ? '#2da44e' : '#111';
+          ctx.fill();
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = '#fff';
+          ctx.stroke();
+        }
+
+        // Handles for selected edge
+        if (state.selection && state.selection.kind === 'edge') {
+          const id = state.selection.id;
+          const handles = g.get_handles(id);
+          if (handles) {
+            const ed = g.get_edge_data();
+            const idx = Array.from(ed.ids).indexOf(id);
+            if (idx >= 0) {
+              const aId = ed.endpoints[idx*2+0];
+              const bId = ed.endpoints[idx*2+1];
+              const a = g.get_node(aId);
+              const b = g.get_node(bId);
+              // stems
+              ctx.beginPath();
+              ctx.moveTo(a[0], a[1]); ctx.lineTo(handles[0], handles[1]);
+              ctx.moveTo(b[0], b[1]); ctx.lineTo(handles[2], handles[3]);
+              ctx.strokeStyle = '#999';
+              ctx.lineWidth = 1;
+              ctx.setLineDash([4, 4]);
+              ctx.stroke();
+              ctx.setLineDash([]);
+              // knobs
+              for (let k = 0; k < 2; k++) {
+                const hx = handles[k*2+0];
+                const hy = handles[k*2+1];
+                const hovered = state.hover && state.hover.kind === 'handle' && state.hover.edge === id && state.hover.end === k;
+                const radius = hovered ? 5 : 4;
+                ctx.beginPath();
+                ctx.arc(hx, hy, radius, 0, Math.PI * 2);
+                ctx.fillStyle = hovered ? '#2da44e' : '#fff';
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#d73a49';
+                ctx.stroke();
+              }
+            }
+          }
+        }
+
+        // Connection preview (rubber band)
+        if (state.connecting) {
+          const start = g.get_node(state.connecting.startId);
+          if (start) {
+            const [sx, sy] = start;
+            const [cx, cy] = state.connecting.cur;
+            ctx.beginPath();
+            ctx.moveTo(sx, sy);
+            ctx.lineTo(cx, cy);
+            ctx.strokeStyle = '#ff9800';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 6]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        }
+      }
+
+      // Regions: recompute at most once per animation frame
+      state.scheduledRegion = false;
+      function scheduleRegions() {
+        if (state.scheduledRegion) return;
+        state.scheduledRegion = true;
+        requestAnimationFrame(() => {
+          state.scheduledRegion = false;
+          const ver = g.geom_version();
+          if (ver === state.regionsVersion) return;
+          const regionsVal = g.get_regions();
+          try { state.regions = JSON.parse(JSON.stringify(regionsVal)); }
+          catch (e) { console.warn('regions normalize failed', e, regionsVal); state.regions = []; }
+          state.regionsVersion = ver;
+          render();
+        });
+      }
+
+      function canvasPoint(evt) {
+        const rect = canvas.getBoundingClientRect();
+        const x = evt.clientX - rect.left;
+        const y = evt.clientY - rect.top;
+        return [x, y];
+      }
+
+      const GRID = 10;
+      function snapPoint(x, y, excludeNodeId = null) {
+        if (!state.snap) return [x, y];
+        // Grid snap first
+        let sx = Math.round(x / GRID) * GRID;
+        let sy = Math.round(y / GRID) * GRID;
+        // Snap to nearest node within radius
+        const data = g.get_node_data();
+        const ids = data.ids;
+        const pos = data.positions;
+        let bestId = null;
+        let bestD2 = 12*12; // radius
+        for (let i = 0; i < ids.length; i++) {
+          const id = ids[i];
+          if (excludeNodeId !== null && id === excludeNodeId) continue;
+          const nx = pos[i*2+0];
+          const ny = pos[i*2+1];
+          const dx = nx - sx; const dy = ny - sy;
+          const d2 = dx*dx + dy*dy;
+          if (d2 < bestD2) { bestD2 = d2; bestId = id; }
+        }
+        if (bestId !== null) {
+          const n = g.get_node(bestId);
+          if (n) { sx = n[0]; sy = n[1]; }
+        }
+        return [sx, sy];
+      }
+
+      canvas.addEventListener('mousedown', (evt) => {
+        const [x, y] = canvasPoint(evt);
+        const pick = g.pick(x, y, 10);
+        if (state.bend && pick && pick.kind === 'edge') {
+          state.bending = { edge: pick.id >>> 0, t: pick.t ?? 0.5 };
+          return;
+        }
+        if (state.bucket && (!pick || !pick.kind)) {
+          // Paint bucket: toggle the region under cursor
+          const regions = state.regions;
+          let hit = null;
+          const list = Array.isArray(regions) ? regions : [];
+          for (const r of list) {
+            if (pointInPoly(x, y, r.points)) { hit = r; break; }
+          }
+          if (hit) {
+            const after = g.toggle_region(hit.key >>> 0);
+            for (const r of state.regions) { if (r.key === hit.key) { r.filled = after; break; } }
+            console.log('Toggled region', hit.key, 'filled:', after);
+            render();
+          } else {
+            console.log('No region under cursor at', x, y);
+          }
+          return;
+        }
+        if (pick && pick.kind === 'node') {
+          const id = pick.id >>> 0;
+          const n = g.get_node(id);
+          state.selection = { kind: 'node', id };
+          if (evt.altKey) {
+            // Start connecting mode
+            state.connecting = { startId: id, startPos: [n[0], n[1]], cur: [x, y] };
+            state.dragging = null;
+          } else {
+            // Drag node
+            state.dragging = { id, start: [x, y], orig: [n[0], n[1]] };
+          }
+        } else if (pick && pick.kind === 'handle') {
+          const edge = pick.edge >>> 0;
+          const end = pick.end >>> 0;
+          state.selection = { kind: 'edge', id: edge };
+          state.dragging = { handle: true, edge, end };
+        } else if (pick && pick.kind === 'edge') {
+          state.selection = { kind: 'edge', id: pick.id >>> 0 };
+          state.dragging = null;
+        } else {
+          state.selection = null;
+          state.dragging = null;
+        }
+        render();
+      });
+
+      window.addEventListener('mousemove', (evt) => {
+        const [x, y] = canvasPoint(evt);
+        if (state.bending) {
+          const { edge, t } = state.bending;
+          const [sx, sy] = snapPoint(x, y, null);
+          g.bend_edge_to(edge, t, sx, sy, 1.0);
+          scheduleRegions();
+          render();
+          return;
+        }
+        // Bucket hover detection
+        if (state.bucket && !state.dragging && !state.connecting) {
+          const regions = state.regions;
+          let found = null;
+          if (Array.isArray(regions)) {
+            for (const r of regions) { if (pointInPoly(x, y, r.points)) { found = r; break; } }
+          }
+          state.hoverRegion = found;
+          render();
+        } else {
+          state.hoverRegion = null;
+        }
+        // Hover update when idle
+        if (!state.dragging && !state.connecting) {
+          const h = g.pick(x, y, 10);
+          if (h && h.kind === 'handle') {
+            state.hover = { kind: 'handle', edge: h.edge >>> 0, end: h.end >>> 0 };
+          } else if (h && h.kind) {
+            state.hover = { kind: h.kind, id: h.id >>> 0 };
+          } else {
+            state.hover = null;
+          }
+        }
+        // Connecting preview
+        if (state.connecting) {
+          const s = state.connecting;
+          const snapped = snapPoint(x, y, s.startId);
+          s.cur = snapped;
+          render();
+          return;
+        }
+        if (!state.dragging) return;
+        if (state.dragging.handle) {
+          const { edge, end } = state.dragging;
+          const [sx, sy] = snapPoint(x, y, null);
+          g.set_handle_pos(edge, end, sx, sy);
+          scheduleRegions();
+          render();
+        } else {
+          const snapped = snapPoint(x, y, state.dragging.id);
+          const { id } = state.dragging;
+          g.move_node(id, snapped[0], snapped[1]);
+          scheduleRegions();
+          render();
+        }
+      });
+
+      window.addEventListener('mouseup', (evt) => {
+        if (state.bending) { state.bending = null; return; }
+        const [x, y] = canvasPoint(evt);
+        if (state.connecting) {
+          const s = state.connecting; state.connecting = null;
+          // If mouse up over a node, connect them
+          const p = g.pick(x, y, 10);
+          if (p && p.kind === 'node') {
+            const endId = p.id >>> 0;
+            if (endId !== s.startId) {
+              g.add_edge(s.startId, endId);
+              scheduleRegions();
+            }
+          }
+          render();
+          return;
+        }
+        if (!state.dragging) return;
+        if (state.dragging.handle) {
+          state.dragging = null;
+        } else {
+          const { id, orig } = state.dragging;
+          state.dragging = null;
+          const after = g.get_node(id);
+          if (after && (after[0] !== orig[0] || after[1] !== orig[1])) {
+            state.history.push({
+              type: 'move_node', id,
+              before: orig.slice(), after: [after[0], after[1]]
+            });
+            state.redo.length = 0; // clear redo on new action
+          }
+        }
+      });
+
+      window.addEventListener('keydown', (evt) => {
+        const mod = evt.ctrlKey || evt.metaKey;
+        if (mod && evt.key.toLowerCase() === 'z') {
+          evt.preventDefault();
+          if (evt.shiftKey) {
+            // redo
+            const op = state.redo.pop();
+            if (op && op.type === 'move_node') {
+              g.move_node(op.id, op.after[0], op.after[1]);
+              state.history.push(op);
+              render();
+            }
+          } else {
+            // undo
+            const op = state.history.pop();
+            if (op && op.type === 'move_node') {
+              g.move_node(op.id, op.before[0], op.before[1]);
+              state.redo.push(op);
+              render();
+            }
+          }
+        } else if (evt.key.toLowerCase() === 's') {
+          state.snap = !state.snap; updateSnapLabel(); render();
+        } else if (evt.key.toLowerCase() === 'f') {
+          state.bucket = !state.bucket; updateModeLabel(); render();
+        } else if (evt.key.toLowerCase() === 'b') {
+          state.bend = !state.bend; updateModeLabel();
+        } else if (evt.key.toLowerCase() === 'r') {
+          const refBtn = document.getElementById('refBtn');
+          state.showRef = !state.showRef; if (refBtn) refBtn.classList.toggle('active', state.showRef); render();
+        } else if (evt.key.toLowerCase() === 'c') {
+          // Convert selected edge to cubic with default handles
+          if (state.selection && state.selection.kind === 'edge') {
+            const id = state.selection.id;
+            const ed = g.get_edge_data();
+            const idx = Array.from(ed.ids).indexOf(id);
+            if (idx >= 0) {
+              const aId = ed.endpoints[idx*2+0];
+              const bId = ed.endpoints[idx*2+1];
+              const a = g.get_node(aId); const b = g.get_node(bId);
+              const dx = b[0] - a[0]; const dy = b[1] - a[1];
+              const len = Math.hypot(dx, dy) || 1;
+              const k = 0.3 * len;
+              const p1x = a[0] + (dx/len) * k;
+              const p1y = a[1] + (dy/len) * k;
+              const p2x = b[0] - (dx/len) * k;
+              const p2y = b[1] - (dy/len) * k;
+              g.set_edge_cubic(id, p1x, p1y, p2x, p2y);
+              render();
+            }
+          }
+        } else if (evt.key.toLowerCase() === 'm') {
+          // Cycle handle mode for selected cubic edge
+          if (state.selection && state.selection.kind === 'edge') {
+            const id = state.selection.id;
+            const e = g.get_edge_data();
+            const idx = Array.from(e.ids).indexOf(id);
+            if (idx >= 0 && e.kinds[idx] === 1) {
+              state.mode = (state.mode || 0) + 1; if (state.mode > 2) state.mode = 0;
+              g.set_handle_mode(id, state.mode);
+              render();
+            }
+          }
+        }
+      });
+
+      // Double-click to add a node at the cursor (snapped)
+      canvas.addEventListener('dblclick', (evt) => {
+        const [x, y] = canvasPoint(evt);
+        const [sx, sy] = snapPoint(x, y, null);
+        g.add_node(sx, sy);
+        render();
+      });
+
+      function pointInPoly(x, y, pts) {
+        // pts is [x0,y0,x1,y1,...]
+        if (!pts || typeof pts.length !== 'number' || pts.length < 6) return false;
+        // Treat near-boundary as inside to avoid flicker
+        if (pointNearPolyEdge(x, y, pts, 0.75)) return true;
+        let inside = false;
+        for (let i = 0, j = pts.length - 2; i < pts.length; j = i, i += 2) {
+          const xi = pts[i], yi = pts[i+1];
+          const xj = pts[j], yj = pts[j+1];
+          const denom = (yj - yi) || 1e-9;
+          const intersect = ((yi > y) !== (yj > y)) &&
+            (x < (xj - xi) * (y - yi) / denom + xi);
+          if (intersect) inside = !inside;
+        }
+        return inside;
+      }
+
+      function pointNearPolyEdge(x, y, pts, eps) {
+        const eps2 = eps * eps;
+        for (let i = 0; i < pts.length; i += 2) {
+          const x1 = pts[i], y1 = pts[i+1];
+          const x2 = pts[(i+2)%pts.length], y2 = pts[(i+3)%pts.length];
+          const d2 = dist2PointToSeg(x, y, x1, y1, x2, y2);
+          if (d2 <= eps2) return true;
+        }
+        return false;
+      }
+
+      function dist2PointToSeg(px, py, x1, y1, x2, y2) {
+        const vx = x2 - x1, vy = y2 - y1;
+        const wx = px - x1, wy = py - y1;
+        const vv = vx*vx + vy*vy;
+        let t = vv > 0 ? (wx*vx + wy*vy) / vv : 0;
+        if (t < 0) t = 0; else if (t > 1) t = 1;
+        const sx = x1 + t*vx, sy = y1 + t*vy;
+        const dx = px - sx, dy = py - sy;
+        return dx*dx + dy*dy;
+      }
+
+      // Buttons: Save/Load/Clear
+      document.getElementById('saveBtn').addEventListener('click', () => {
+        try {
+          const obj = g.to_json();
+          localStorage.setItem('vecnet_doc', JSON.stringify(obj));
+        } catch (e) { console.warn('Save failed', e); }
+      });
+      document.getElementById('loadBtn').addEventListener('click', () => {
+        try {
+          const saved = localStorage.getItem('vecnet_doc');
+          if (saved) { g.from_json(JSON.parse(saved)); scheduleRegions(); render(); }
+        } catch (e) { console.warn('Load failed', e); }
+      });
+      document.getElementById('clearBtn').addEventListener('click', () => {
+        g.clear();
+        scheduleRegions(); render();
+      });
+
+      // Import SVG (file input + button)
+      function importSvgText(text) {
+        try {
+          const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+          const paths = Array.from(doc.querySelectorAll('path'));
+          let added = 0;
+          const imported = [];
+          const newSvgStrokes = [];
+          for (const p of paths) {
+            const d = p.getAttribute('d');
+            if (!d || !d.trim()) continue;
+            const { color } = resolveFillAndOpacity(p);
+            const { strokeColor, strokeWidth } = resolveStroke(p);
+            const before = new Set(Array.from((g.get_edge_data().ids) || []));
+            try {
+              if (strokeColor && strokeWidth != null && typeof g.add_svg_path_with_style === 'function') {
+                const [sr,sg,sb,sa] = strokeColor;
+                added += g.add_svg_path_with_style(d, sr|0, sg|0, sb|0, sa|0, Math.max(0.5, strokeWidth));
+              } else {
+                added += g.add_svg_path(d);
+              }
+              // Gather new edge ids and store style mapping (JS fallback always)
+              const after = Array.from((g.get_edge_data().ids) || []);
+              const newIds = after.filter(id => !before.has(id));
+              if (strokeColor && strokeWidth != null) {
+                const [rr,gg,bb,aa] = strokeColor;
+                for (const eid of newIds) {
+                  if (typeof g.set_edge_style === 'function') {
+                    try { g.set_edge_style(eid, rr|0, gg|0, bb|0, aa|0, Math.max(0.5, strokeWidth)); } catch {}
+                  }
+                  state.edgeStyle[eid] = { color: [rr|0, gg|0, bb|0, aa|0], width: Math.max(0.5, strokeWidth) };
+                }
+                // Also record for reference overlay rendering
+                newSvgStrokes.push({ d, color: [rr|0, gg|0, bb|0, aa|0], width: Math.max(0.5, strokeWidth), cap: (p.getAttribute('stroke-linecap')||'round'), join: (p.getAttribute('stroke-linejoin')||'round') });
+              }
+              imported.push({ d, color });
+            } catch (e) { console.warn('add_svg_path failed', e); }
+          }
+          // Map fills (if any) to regions
+          const updateFills = () => {
+            const regionsVal = g.get_regions();
+            let regions = [];
+            try { regions = JSON.parse(JSON.stringify(regionsVal)); } catch {}
+            for (const imp of imported) {
+              if (!imp.color) continue;
+              const path2d = new Path2D(imp.d);
+              for (const r of regions) {
+                const c = centroidOfPoints(r.points);
+                if (ctx.isPointInPath(path2d, c[0], c[1])) {
+                  g.set_region_fill(r.key >>> 0, true);
+                  const [rr,gg,bb,aa] = imp.color;
+                  g.set_region_color(r.key >>> 0, rr, gg, bb, aa);
+                }
+              }
+            }
+            // If no fills assigned at all, turn fills off
+            let afterColor = g.get_regions();
+            let arr = [];
+            try { arr = JSON.parse(JSON.stringify(afterColor)); } catch { arr = []; }
+            if (!arr.some(r => r && r.color && r.color.length === 4)) {
+              for (const r of arr) { g.set_region_fill(r.key >>> 0, false); }
+              afterColor = g.get_regions();
+            }
+            try { state.regions = JSON.parse(JSON.stringify(afterColor)); } catch { state.regions = []; }
+            state.regionsVersion = g.geom_version();
+            // Enable reference overlay and store strokes
+            state.svgStrokes = newSvgStrokes;
+            state.showRef = state.svgStrokes.length > 0;
+            fitToView();
+            render();
+          };
+          if (added > 0) requestAnimationFrame(updateFills); else updateFills();
+          console.log(`Imported ${paths.length} <path> tags; edges added: ${added}`);
+          console.log('Parsed strokes:', newSvgStrokes.length, newSvgStrokes.slice(0,3));
+        } catch (e) { console.warn('SVG parse/import failed', e); }
+      }
+
+      // Build objects panel: one entry per edge with a small preview
+      function rebuildObjectList() {
+        const list = document.getElementById('objList'); if (!list) return;
+        list.innerHTML = '';
+        const e = g.get_edge_data();
+        const ids = e.ids || [];
+        const ep = e.endpoints || [];
+        const kinds = e.kinds || [];
+        const rgba = e.stroke_rgba || [];
+        const widths = e.stroke_widths || [];
+        for (let i = 0; i < ids.length; i++) {
+          const edgeId = ids[i];
+          const aId = ep[i*2+0];
+          const bId = ep[i*2+1];
+          const a = g.get_node(aId); const b = g.get_node(bId);
+          if (!a || !b) continue;
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex; gap:8px; align-items:center; padding:6px; border:1px solid #eee; border-radius:6px; background:#fff; cursor:pointer;';
+          const canvas = document.createElement('canvas');
+          canvas.width = 120; canvas.height = 60;
+          canvas.style.cssText = 'width:120px; height:60px; background:#fff; border:1px solid #eee; border-radius:4px;';
+          const label = document.createElement('div');
+          label.textContent = `Path ${edgeId}`;
+          label.style.cssText = 'font-size:12px; color:#333;';
+          row.appendChild(canvas); row.appendChild(label);
+          row.addEventListener('click', () => { state.selection = { kind:'edge', id: edgeId }; render(); });
+          list.appendChild(row);
+
+          // Draw preview
+          try {
+            const ctx2 = canvas.getContext('2d');
+            ctx2.clearRect(0,0,canvas.width,canvas.height);
+            // Determine color/width
+            let col = 'rgba(31,111,235,1)';
+            let w = 2;
+            if (rgba && rgba.length >= (i*4+4) && widths && widths.length > i) {
+              const r = rgba[i*4+0]||0, g2=rgba[i*4+1]||0, b2=rgba[i*4+2]||0, a2=rgba[i*4+3]||255;
+              if (a2>0) col = `rgba(${r},${g2},${b2},${Math.max(0,Math.min(1,a2/255))})`;
+              if (widths[i]>0) w = widths[i];
+            } else if (state.edgeStyle && state.edgeStyle[edgeId]) {
+              const st = state.edgeStyle[edgeId]; const [r,g3,b3,a3] = st.color||[31,111,235,255];
+              col = `rgba(${r},${g3},${b3},${Math.max(0,Math.min(1,(a3||255)/255))})`; w = st.width||2;
+            }
+            // Compute bounds using endpoints + handles (convex hull bounds)
+            let pts = [a[0],a[1]];
+            if (kinds[i] === 1) {
+              const h = g.get_handles(edgeId); if (h) { pts.push(h[0],h[1], h[2],h[3]); }
+            }
+            pts.push(b[0],b[1]);
+            let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+            for (let k=0;k<pts.length;k+=2){ const x=pts[k], y=pts[k+1]; if(x<minX)minX=x; if(y<minY)minY=y; if(x>maxX)maxX=x; if(y>maxY)maxY=y; }
+            if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) continue;
+            const pad = 6; const boxW = Math.max(1,maxX-minX), boxH=Math.max(1,maxY-minY);
+            const sx = (canvas.width-2*pad)/boxW, sy=(canvas.height-2*pad)/boxH; const s=Math.min(sx,sy);
+            const ox = pad - minX*s; const oy = pad - minY*s;
+            ctx2.save(); ctx2.translate(ox,oy); ctx2.scale(s,s);
+            ctx2.beginPath(); ctx2.moveTo(a[0],a[1]);
+            if (kinds[i] === 1) {
+              const h = g.get_handles(edgeId); if (h) ctx2.bezierCurveTo(h[0],h[1],h[2],h[3], b[0],b[1]);
+              else ctx2.lineTo(b[0],b[1]);
+            } else {
+              ctx2.lineTo(b[0],b[1]);
+            }
+            ctx2.strokeStyle = col; ctx2.lineWidth = Math.max(1, w * s);
+            ctx2.lineCap='round'; ctx2.lineJoin='round'; ctx2.stroke(); ctx2.restore();
+          } catch (e) { /* ignore */ }
+        }
+      }
+      // Resolve fill color and opacity with basic inheritance (path -> ancestors),
+      // defaulting to black if nothing specified (SVG default fill).
+      function resolveFillAndOpacity(el) {
+        const readStyle = (node) => {
+          const style = (node.getAttribute && node.getAttribute('style')) || '';
+          const m = (name) => { const r = style.match(new RegExp(`${name}\\s*:\\s*([^;]+)`,'i')); return r ? r[1].trim() : null; };
+          return { fill: m('fill'), fillOpacity: m('fill-opacity'), opacity: m('opacity') };
+        };
+        let cur = el;
+        let fill = null;
+        let fo = null;
+        let op = null;
+        while (cur) {
+          const fAttr = cur.getAttribute && cur.getAttribute('fill');
+          const foAttr = cur.getAttribute && cur.getAttribute('fill-opacity');
+          const opAttr = cur.getAttribute && cur.getAttribute('opacity');
+          const st = readStyle(cur);
+          if (fill == null && fAttr != null) fill = fAttr;
+          if (fill == null && st.fill != null) fill = st.fill;
+          if (fo == null && foAttr != null) fo = foAttr;
+          if (fo == null && st.fillOpacity != null) fo = st.fillOpacity;
+          if (op == null && opAttr != null) op = opAttr;
+          if (op == null && st.opacity != null) op = st.opacity;
+          cur = cur.parentNode;
+        }
+        // Default SVG fill is black if not 'none'
+        const opacity = clamp01(parseFloat(fo ?? op ?? '1'));
+        const color = parseCssColor(fill == null || fill === '' ? 'black' : fill, opacity);
+        return { color };
+      }
+      function clamp01(v) { if (!isFinite(v)) return 1; if (v < 0) return 0; if (v > 1) return 1; return v; }
+      function parseCssColor(value, opacity=1) {
+        if (!value || value === 'none') return null;
+        const v = String(value).trim();
+        // Tolerant rgb/rgba parser that clamps out-of-range channels
+        const m = v.match(/^rgba?\(([^)]+)\)$/i);
+        if (m) {
+          const parts = m[1].split(',').map(s=>s.trim());
+          const to255 = (x) => {
+            const n = parseFloat(x);
+            if (!isFinite(n)) return 0;
+            return Math.max(0, Math.min(255, Math.round(n)));
+          };
+          const r = to255(parts[0]);
+          const g = to255(parts[1]);
+          const b = to255(parts[2]);
+          const aPart = parts[3] != null ? clamp01(parseFloat(parts[3])) : 1;
+          const a = Math.round(clamp01(aPart * opacity) * 255);
+          return [r,g,b,a];
+        }
+        // Hex codes
+        if (v[0] === '#') {
+          const hex = v.slice(1);
+          const norm = hex.length === 3 ? hex.split('').map(c=>c+c).join('') : hex;
+          if (/^[0-9a-fA-F]{6}$/.test(norm)) {
+            const n = parseInt(norm, 16);
+            const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+            const a = Math.round(clamp01(opacity) * 255);
+            return [r,g,b,a];
+          }
+        }
+        // Named colors: use canvas fallback
+        try {
+          const c = document.createElement('canvas');
+          const cx = c.getContext('2d');
+          cx.fillStyle = v;
+          const norm = cx.fillStyle;
+          const m2 = norm.match(/rgba?\(([^)]+)\)/i);
+          if (!m2) return null;
+          const parts = m2[1].split(',').map(s=>s.trim());
+          const r = parseInt(parts[0],10), g = parseInt(parts[1],10), b = parseInt(parts[2],10);
+          const aPart = parts[3] != null ? clamp01(parseFloat(parts[3])) : 1;
+          const a = Math.round(clamp01(aPart * opacity) * 255);
+          return [r,g,b,a];
+        } catch { return null; }
+      }
+      function centroidOfPoints(pts) {
+        // pts: [x0,y0,x1,y1,...]
+        let area = 0, cx = 0, cy = 0;
+        for (let i = 0, j = pts.length-2; i < pts.length; j = i, i += 2) {
+          const x0 = pts[j], y0 = pts[j+1], x1 = pts[i], y1 = pts[i+1];
+          const cross = x0*y1 - x1*y0; area += cross; cx += (x0 + x1) * cross; cy += (y0 + y1) * cross;
+        }
+        area *= 0.5; if (Math.abs(area) < 1e-6) return [pts[0], pts[1]];
+        return [cx/(6*area), cy/(6*area)];
+      }
+
+      function fitToView(padding = 20) {
+        // Compute bbox of all nodes
+        const data = g.get_node_data();
+        const pos = data.positions;
+        if (!pos || pos.length < 2) return;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (let i = 0; i < pos.length; i += 2) {
+          const x = pos[i], y = pos[i+1];
+          if (!isFinite(x) || !isFinite(y)) continue;
+          if (x < minX) minX = x; if (y < minY) minY = y;
+          if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+        }
+        if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) return;
+        const width = canvas.width / (window.devicePixelRatio || 1);
+        const height = canvas.height / (window.devicePixelRatio || 1);
+        const boxW = Math.max(1, maxX - minX);
+        const boxH = Math.max(1, maxY - minY);
+        const sx = (width - 2*padding) / boxW;
+        const sy = (height - 2*padding) / boxH;
+        const s = Math.min(sx, sy);
+        const tx = padding - minX * s;
+        const ty = padding - minY * s;
+        // Uniformly transform graph to preserve curve shapes and handle offsets
+        g.transform_all(s, tx, ty, true);
+        state.transform = { s, tx, ty };
+        scheduleRegions();
+      }
+
+      function resolveStroke(el) {
+        const readStyle = (node) => {
+          const style = (node.getAttribute && node.getAttribute('style')) || '';
+          const m = (name) => { const r = style.match(new RegExp(`${name}\\s*:\\s*([^;]+)`,'i')); return r ? r[1].trim() : null; };
+          return { stroke: m('stroke'), strokeOpacity: m('stroke-opacity'), strokeWidth: m('stroke-width'), opacity: m('opacity') };
+        };
+        let cur = el;
+        let stroke = null;
+        let so = null;
+        let sw = null;
+        let op = null;
+        while (cur) {
+          const sAttr = cur.getAttribute && cur.getAttribute('stroke');
+          const soAttr = cur.getAttribute && cur.getAttribute('stroke-opacity');
+          const swAttr = cur.getAttribute && cur.getAttribute('stroke-width');
+          const opAttr = cur.getAttribute && cur.getAttribute('opacity');
+          const st = readStyle(cur);
+          if (stroke == null && sAttr != null) stroke = sAttr;
+          if (stroke == null && st.stroke != null) stroke = st.stroke;
+          if (so == null && soAttr != null) so = soAttr;
+          if (so == null && st.strokeOpacity != null) so = st.strokeOpacity;
+          if (sw == null && swAttr != null) sw = swAttr;
+          if (sw == null && st.strokeWidth != null) sw = st.strokeWidth;
+          if (op == null && opAttr != null) op = opAttr;
+          if (op == null && st.opacity != null) op = st.opacity;
+          cur = cur.parentNode;
+        }
+        if (!stroke || stroke === 'none') return { strokeColor: null, strokeWidth: null };
+        const opacity = clamp01(parseFloat(so ?? op ?? '1'));
+        const strokeColor = parseCssColor(stroke, opacity);
+        const strokeWidth = parseFloat(sw ?? '2');
+        return { strokeColor, strokeWidth: isFinite(strokeWidth) ? strokeWidth : 2 };
+      }
+      const importInput = document.getElementById('importSvgInput');
+      document.getElementById('importBtn').addEventListener('click', () => importInput.click());
+      importInput.addEventListener('change', (evt) => {
+        const file = evt.target.files && evt.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => { importSvgText(String(reader.result || '')); importInput.value = ''; };
+        reader.onerror = (e) => { console.warn('File read failed', e); importInput.value = ''; };
+        reader.readAsText(file);
+      });
+
+      // Drag-and-drop SVG onto the canvas
+      canvas.addEventListener('dragover', (evt) => { evt.preventDefault(); evt.dataTransfer.dropEffect = 'copy'; });
+      canvas.addEventListener('drop', (evt) => {
+        evt.preventDefault();
+        const dt = evt.dataTransfer;
+        if (!dt || !dt.files || dt.files.length === 0) return;
+        const file = dt.files[0];
+        if (!file.type.includes('svg') && !file.name.toLowerCase().endsWith('.svg')) { console.warn('Not an SVG'); return; }
+        const reader = new FileReader();
+        reader.onload = () => importSvgText(String(reader.result || ''));
+        reader.onerror = (e) => console.warn('Drop read failed', e);
+        reader.readAsText(file);
+      });
+
+      document.getElementById('bucketBtn').addEventListener('click', () => {
+        state.bucket = !state.bucket; updateModeLabel(); render();
+      });
+      document.getElementById('bendBtn').addEventListener('click', () => {
+        state.bend = !state.bend; updateModeLabel();
+      });
+      const refBtn = document.getElementById('refBtn');
+      if (refBtn) {
+        refBtn.addEventListener('click', () => {
+          state.showRef = !state.showRef;
+          refBtn.classList.toggle('active', state.showRef);
+          render();
+        });
+      }
+
+      render();
+    </script>
+  </body>
+  </html>

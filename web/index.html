@@ -26,6 +26,10 @@
       <div style="margin-top:8px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
         <div id="toolbar" style="display:flex; gap:6px; align-items:center; border:1px solid #e2e2e2; border-radius:8px; padding:6px; background:#fff;">
           <button id="penBtn" title="Pen tool (P)">Pen</button>
+          <select id="penMode" title="Pen mode" style="font-size:12px; padding:4px 6px; border:1px solid #e2e2e2; border-radius:6px; background:#fff;">
+            <option value="points">Points</option>
+            <option value="free">Free Draw</option>
+          </select>
           <button id="bendBtn" title="Toggle bend tool (B)">Bend</button>
           <button id="bucketBtn" title="Toggle paint bucket (F)">Bucket</button>
           <button id="refBtn" title="Toggle reference SVG overlay (R)">Ref</button>
@@ -86,6 +90,7 @@
         redo: [],        // redo stack
         snap: true,
         pen: false,
+        penMode: 'points',
         bucket: false,
         regionsVersion: 0,
         regions: [],
@@ -93,6 +98,8 @@
         bending: null, // { edge, t }
         penPath: null, // { startId, lastId }
         penPreview: null, // [x,y]
+        freeDrawing: false,
+        freePoints: null, // [x0,y0,x1,y1,...]
         edgeStyle: {}, // fallback JS-side style map: id -> { color:[r,g,b,a], width }
         svgStrokes: [], // [{ d, color:[r,g,b,a], width, cap, join }]
         showRef: false,
@@ -106,7 +113,7 @@
       }
       function updateModeLabel() {
         let mode = 'Select/Drag';
-        if (state.pen) mode = 'Pen'; else if (state.bucket) mode = 'Bucket'; else if (state.bend) mode = 'Bend';
+        if (state.pen) mode = 'Pen' + (state.penMode === 'free' ? ' (Free)' : ''); else if (state.bucket) mode = 'Bucket'; else if (state.bend) mode = 'Bend';
         modeLabel.textContent = 'Mode: ' + mode;
         canvas.style.cursor = state.bucket ? 'cell' : (state.bend ? 'crosshair' : (state.pen ? 'crosshair' : 'default'));
         document.getElementById('bucketBtn').classList.toggle('active', state.bucket);
@@ -194,7 +201,7 @@
         const e = g.get_edge_data();
         const eids = e.ids; // Uint32Array
         const ep = e.endpoints; // Uint32Array [a,b,...]
-        const kinds = e.kinds; // Uint8Array 0=line,1=cubic
+        const kinds = e.kinds; // Uint8Array 0=line,1=cubic,2=polyline
         const rgba = e.stroke_rgba; // Uint8Array (4 per edge) or undefined
         const widths = e.stroke_widths; // Float32Array or undefined
         ctx.lineWidth = 2;
@@ -260,6 +267,13 @@
             } else {
               ctx.lineTo(nb[0], nb[1]);
             }
+          } else if (kinds[i] === 2) {
+            try {
+              const pts = g.get_polyline_points(edgeId);
+              const arr = Array.from(pts || []);
+              for (let k = 0; k+1 < arr.length; k += 2) ctx.lineTo(arr[k], arr[k+1]);
+              ctx.lineTo(nb[0], nb[1]);
+            } catch { ctx.lineTo(nb[0], nb[1]); }
           } else {
             ctx.lineTo(nb[0], nb[1]);
           }
@@ -348,8 +362,8 @@
           }
         }
 
-        // Pen tool rubber band
-        if (state.pen && state.penPath && state.penPreview) {
+        // Pen tool rubber band (points mode)
+        if (state.pen && state.penMode === 'points' && state.penPath && state.penPreview) {
           const last = g.get_node(state.penPath.lastId);
           if (last) {
             const [sx, sy] = [last[0], last[1]];
@@ -363,6 +377,17 @@
             ctx.stroke();
             ctx.setLineDash([]);
           }
+        }
+        // Pen free-draw preview
+        if (state.pen && state.penMode === 'free' && state.freeDrawing && Array.isArray(state.freePoints) && state.freePoints.length >= 4) {
+          ctx.beginPath();
+          ctx.moveTo(state.freePoints[0], state.freePoints[1]);
+          for (let i = 2; i < state.freePoints.length; i += 2) ctx.lineTo(state.freePoints[i], state.freePoints[i+1]);
+          ctx.strokeStyle = '#ff9800';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 6]);
+          ctx.stroke();
+          ctx.setLineDash([]);
         }
       }
 
@@ -593,7 +618,7 @@
       canvas.addEventListener('mousedown', (evt) => {
         const [x, y] = canvasPoint(evt);
         // Pen tool interactions
-        if (state.pen) {
+        if (state.pen && state.penMode === 'points') {
           const [sx, sy] = snapPoint(x, y, null);
           const pickP = g.pick(sx, sy, 8);
           if (!state.penPath) {
@@ -626,7 +651,15 @@
             return;
           }
         }
-        
+        // Pen free draw: start stroke
+        if (state.pen && state.penMode === 'free') {
+          const [sx, sy] = snapPoint(x, y, null);
+          state.freeDrawing = true;
+          state.freePoints = [sx, sy];
+          render();
+          return;
+        }
+
         const pick = g.pick(x, y, 10);
         if (state.bend && pick && pick.kind === 'edge') {
           state.bending = { edge: pick.id >>> 0, t: pick.t ?? 0.5 };
@@ -679,10 +712,24 @@
 
       window.addEventListener('mousemove', (evt) => {
         const [x, y] = canvasPoint(evt);
-        if (state.pen && state.penPath) {
+        if (state.pen && state.penMode === 'points' && state.penPath) {
           const [sx, sy] = snapPoint(x, y, null);
           state.penPreview = [sx, sy];
           render();
+          return;
+        }
+        if (state.pen && state.penMode === 'free' && state.freeDrawing) {
+          const [sx, sy] = snapPoint(x, y, null);
+          const pts = state.freePoints || [];
+          const n = pts.length;
+          const lx = pts[n-2], ly = pts[n-1];
+          const dx = sx - lx, dy = sy - ly;
+          const d2 = dx*dx + dy*dy;
+          if (d2 >= 9) { // sample every ~3px
+            pts.push(sx, sy);
+            state.freePoints = pts;
+            render();
+          }
           return;
         }
         if (state.bending) {
@@ -743,6 +790,42 @@
       window.addEventListener('mouseup', (evt) => {
         if (state.bending) { state.bending = null; return; }
         const [x, y] = canvasPoint(evt);
+        // Finish free draw on mouseup
+        if (state.pen && state.penMode === 'free' && state.freeDrawing) {
+          const pts = Array.isArray(state.freePoints) ? state.freePoints.slice() : [];
+          state.freeDrawing = false; state.freePoints = null;
+          if (pts.length >= 4) {
+            // Optionally close if end near start
+            const dx = pts[pts.length-2] - pts[0];
+            const dy = pts[pts.length-1] - pts[1];
+            const close = (dx*dx + dy*dy) <= 12*12;
+            // Decimate intermediate points
+            const out = [pts[0], pts[1]];
+            let px = pts[0], py = pts[1];
+            for (let i = 2; i < pts.length-2; i += 2) {
+              const cx = pts[i], cy = pts[i+1];
+              const ddx = cx - px, ddy = cy - py;
+              if ((ddx*ddx + ddy*ddy) >= 16) { out.push(cx, cy); px = cx; py = cy; }
+            }
+            const endX = pts[pts.length-2], endY = pts[pts.length-1];
+            // Build polyline edge: endpoints become nodes; out (excluding endpoints) are internal points
+            const startId = g.add_node(out[0], out[1]);
+            const endId = g.add_node(endX, endY);
+            // Internal points are out.slice(2)
+            const internal = out.slice(2);
+            try {
+              if (typeof g.add_polyline_edge === 'function') {
+                g.add_polyline_edge(startId, endId, new Float32Array(internal));
+              } else {
+                const eid = g.add_edge(startId, endId);
+                if (eid != null && typeof g.set_edge_polyline === 'function') g.set_edge_polyline(eid, new Float32Array(internal));
+              }
+            } catch {}
+            scheduleRegions();
+            render();
+          }
+          return;
+        }
         if (state.connecting) {
           const s = state.connecting; state.connecting = null;
           // If mouse up over a node, connect them
@@ -1056,6 +1139,8 @@
             let pts = [a[0],a[1]];
             if (kinds[i] === 1) {
               const h = g.get_handles(edgeId); if (h) { pts.push(h[0],h[1], h[2],h[3]); }
+            } else if (kinds[i] === 2) {
+              try { const a = g.get_polyline_points(edgeId); const arr = Array.from(a||[]); for (let t=0;t<arr.length;t+=2){ pts.push(arr[t], arr[t+1]); } } catch {}
             }
             pts.push(b[0],b[1]);
             let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
@@ -1069,6 +1154,8 @@
             if (kinds[i] === 1) {
               const h = g.get_handles(edgeId); if (h) ctx2.bezierCurveTo(h[0],h[1],h[2],h[3], b[0],b[1]);
               else ctx2.lineTo(b[0],b[1]);
+            } else if (kinds[i] === 2) {
+              try { const a = g.get_polyline_points(edgeId); const arr = Array.from(a||[]); for (let t=0;t<arr.length;t+=2){ ctx2.lineTo(arr[t], arr[t+1]); } ctx2.lineTo(b[0],b[1]); } catch { ctx2.lineTo(b[0],b[1]); }
             } else {
               ctx2.lineTo(b[0],b[1]);
             }
@@ -1252,6 +1339,14 @@
 
       const penBtn = document.getElementById('penBtn');
       if (penBtn) penBtn.addEventListener('click', () => { state.pen = !state.pen; if (state.pen) { state.bend = false; state.bucket = false; } else { state.penPath = null; state.penPreview = null; } updateModeLabel(); render(); });
+      const penModeSel = document.getElementById('penMode');
+      if (penModeSel) penModeSel.addEventListener('change', (e) => {
+        const v = e.target && e.target.value ? String(e.target.value) : 'points';
+        state.penMode = (v === 'free') ? 'free' : 'points';
+        // Cancel any in-progress drawing for clean switch
+        state.penPath = null; state.penPreview = null; state.freeDrawing = false; state.freePoints = null;
+        updateModeLabel(); render();
+      });
       document.getElementById('bucketBtn').addEventListener('click', () => {
         state.bucket = !state.bucket; if (state.bucket) { state.pen = false; state.bend = false; } updateModeLabel(); render();
       });

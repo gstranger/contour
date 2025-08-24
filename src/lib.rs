@@ -18,13 +18,14 @@ enum HandleMode { Free = 0, Mirrored = 1, Aligned = 2 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct Vec2 { x: f32, y: f32 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum EdgeKind {
     Line,
     Cubic { ha: Vec2, hb: Vec2, mode: HandleMode },
+    Polyline { points: Vec<Vec2> }, // intermediate absolute points between a and b
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Edge {
     a: u32,
     b: u32,
@@ -155,7 +156,7 @@ impl Graph {
                 ids.push(i as u32);
                 endpoints.push(e.a);
                 endpoints.push(e.b);
-                kinds.push(match e.kind { EdgeKind::Line => 0, EdgeKind::Cubic { .. } => 1 });
+                kinds.push(match e.kind { EdgeKind::Line => 0, EdgeKind::Cubic { .. } => 1, EdgeKind::Polyline { .. } => 2 });
                 if let Some(c) = e.stroke {
                     stroke_rgba.push(c.r); stroke_rgba.push(c.g); stroke_rgba.push(c.b); stroke_rgba.push(c.a);
                     stroke_widths.push(e.stroke_width);
@@ -264,6 +265,31 @@ impl Graph {
                             }
                         }
                     }
+                    EdgeKind::Polyline { ref points } => {
+                        let a = match self.nodes.get(e.a as usize).and_then(|n| *n) { Some(n) => n, None => continue };
+                        let b = match self.nodes.get(e.b as usize).and_then(|n| *n) { Some(n) => n, None => continue };
+                        // Build chain: A -> points... -> B
+                        let mut prevx = a.x; let mut prevy = a.y;
+                        let mut length = 0.0f32;
+                        let mut segs: Vec<(f32,f32,f32,f32,f32)> = Vec::new(); // (x1,y1,x2,y2,segLen)
+                        for p in points {
+                            let x2 = p.x; let y2 = p.y;
+                            let seg_len = ((x2 - prevx).powi(2) + (y2 - prevy).powi(2)).sqrt();
+                            if seg_len > 0.0 { segs.push((prevx, prevy, x2, y2, seg_len)); length += seg_len; }
+                            prevx = x2; prevy = y2;
+                        }
+                        let seg_len = ((b.x - prevx).powi(2) + (b.y - prevy).powi(2)).sqrt();
+                        if seg_len > 0.0 { segs.push((prevx, prevy, b.x, b.y, seg_len)); length += seg_len; }
+                        let mut acc = 0.0f32;
+                        for (x1,y1,x2,y2,seg_len) in segs.into_iter() {
+                            let (d2, tseg) = seg_distance_sq(x, y, x1, y1, x2, y2);
+                            if d2 <= tol2 {
+                                let t_along = if length > 0.0 { (acc + tseg*seg_len) / length } else { 0.0 };
+                                if best_edge.map_or(true, |(_, bd2, _)| d2 < bd2) { best_edge = Some((i as u32, d2, t_along)); }
+                            }
+                            acc += seg_len;
+                        }
+                    }
                 }
             }
         }
@@ -285,7 +311,7 @@ impl Graph {
         struct NodeSer { id: u32, x: f32, y: f32 }
         #[derive(Serialize)]
         #[serde(tag = "kind", rename_all = "lowercase")]
-        enum EdgeSerKind { Line, Cubic { ha: Vec2, hb: Vec2, mode: HandleMode } }
+        enum EdgeSerKind { Line, Cubic { ha: Vec2, hb: Vec2, mode: HandleMode }, Polyline { points: Vec<Vec2> } }
         #[derive(Serialize)]
         struct EdgeSer { id: u32, a: u32, b: u32, #[serde(flatten)] kind: EdgeSerKind, stroke: Option<Color>, width: f32 }
         #[derive(Serialize)]
@@ -300,9 +326,10 @@ impl Graph {
         let mut edges = Vec::new();
         for (i, e) in self.edges.iter().enumerate() {
             if let Some(e) = e {
-                let kind = match e.kind {
+                let kind = match &e.kind {
                     EdgeKind::Line => EdgeSerKind::Line,
-                    EdgeKind::Cubic { ha, hb, mode } => EdgeSerKind::Cubic { ha, hb, mode },
+                    EdgeKind::Cubic { ha, hb, mode } => EdgeSerKind::Cubic { ha: *ha, hb: *hb, mode: *mode },
+                    EdgeKind::Polyline { points } => EdgeSerKind::Polyline { points: points.clone() },
                 };
                 edges.push(EdgeSer { id: i as u32, a: e.a, b: e.b, kind, stroke: e.stroke, width: e.stroke_width });
             }
@@ -318,7 +345,7 @@ impl Graph {
         struct NodeDe { id: u32, x: f32, y: f32 }
         #[derive(Deserialize)]
         #[serde(tag = "kind", rename_all = "lowercase")]
-        enum EdgeDeKind { Line, Cubic { ha: Vec2, hb: Vec2, mode: Option<HandleMode> } }
+        enum EdgeDeKind { Line, Cubic { ha: Vec2, hb: Vec2, mode: Option<HandleMode> }, Polyline { points: Vec<Vec2> } }
         #[derive(Deserialize)]
         struct EdgeDe { id: u32, a: u32, b: u32, #[serde(flatten)] kind: Option<EdgeDeKind>, stroke: Option<Color>, width: Option<f32> }
         #[derive(Deserialize)]
@@ -338,6 +365,7 @@ impl Graph {
                 let kind = match e.kind.unwrap_or(EdgeDeKind::Line) {
                     EdgeDeKind::Line => EdgeKind::Line,
                     EdgeDeKind::Cubic { ha, hb, mode } => EdgeKind::Cubic { ha, hb, mode: mode.unwrap_or(HandleMode::Free) },
+                    EdgeDeKind::Polyline { points } => EdgeKind::Polyline { points },
                 };
                 self.edges[e.id as usize] = Some(Edge { a: e.a, b: e.b, kind, stroke: e.stroke, stroke_width: e.width.unwrap_or(2.0) });
             }
@@ -450,6 +478,16 @@ impl Graph {
                             let q = Pt { x: w[1].x, y: w[1].y };
                             segs.push((p, q, eid as u32));
                         }
+                    }
+                    EdgeKind::Polyline { ref points } => {
+                        let mut prev = Pt { x: a.x, y: a.y };
+                        for pt in points {
+                            let next = Pt { x: pt.x, y: pt.y };
+                            segs.push((prev, next, eid as u32));
+                            prev = next;
+                        }
+                        let endp = Pt { x: b.x, y: b.y };
+                        segs.push((prev, endp, eid as u32));
                     }
                 }
             }
@@ -897,8 +935,15 @@ impl Graph {
         }
         for e in self.edges.iter_mut() {
             if let Some(edge) = e.as_mut() {
-                if let EdgeKind::Cubic { ha, hb, mode } = edge.kind {
-                    edge.kind = EdgeKind::Cubic { ha: Vec2 { x: ha.x * s, y: ha.y * s }, hb: Vec2 { x: hb.x * s, y: hb.y * s }, mode };
+                match edge.kind.clone() {
+                    EdgeKind::Cubic { ha, hb, mode } => {
+                        edge.kind = EdgeKind::Cubic { ha: Vec2 { x: ha.x * s, y: ha.y * s }, hb: Vec2 { x: hb.x * s, y: hb.y * s }, mode };
+                    }
+                    EdgeKind::Polyline { mut points } => {
+                        for p in &mut points { p.x = p.x * s; p.y = p.y * s; }
+                        edge.kind = EdgeKind::Polyline { points };
+                    }
+                    EdgeKind::Line => {}
                 }
                 if scale_stroke {
                     if edge.stroke_width.is_finite() { edge.stroke_width *= s.max(0.0); }
@@ -1010,6 +1055,51 @@ impl Graph {
 
 #[wasm_bindgen]
 impl Graph {
+    /// Set a polyline on an existing edge. `points` is [x0,y0,x1,y1,...] of intermediate points (excludes endpoints).
+    pub fn set_edge_polyline(&mut self, id: u32, points: &Float32Array) -> bool {
+        if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
+            let mut pts: Vec<Vec2> = Vec::new();
+            let len = points.length() as usize;
+            let mut buf = vec![0f32; len];
+            points.copy_to(&mut buf);
+            for i in (0..buf.len()).step_by(2) {
+                if i+1 < buf.len() { pts.push(Vec2 { x: buf[i], y: buf[i+1] }); }
+            }
+            edge.kind = EdgeKind::Polyline { points: pts };
+            self.geom_ver = self.geom_ver.wrapping_add(1);
+            return true;
+        }
+        false
+    }
+
+    /// Get polyline points for an edge as Float32Array [x0,y0,...] or null if not polyline
+    pub fn get_polyline_points(&self, id: u32) -> JsValue {
+        if let Some(Some(edge)) = self.edges.get(id as usize) {
+            if let EdgeKind::Polyline { points } = &edge.kind {
+                let mut out: Vec<f32> = Vec::with_capacity(points.len()*2);
+                for p in points { out.push(p.x); out.push(p.y); }
+                let arr = Float32Array::from(out.as_slice());
+                return arr.into();
+            }
+        }
+        JsValue::NULL
+    }
+
+    /// Convenience: add a new polyline edge between `a` and `b` with intermediate points.
+    pub fn add_polyline_edge(&mut self, a: u32, b: u32, points: &Float32Array) -> Option<u32> {
+        if a == b { return None; }
+        if self.nodes.get(a as usize).and_then(|n| n.as_ref()).is_none() { return None; }
+        if self.nodes.get(b as usize).and_then(|n| n.as_ref()).is_none() { return None; }
+        let mut pts: Vec<Vec2> = Vec::new();
+        let len = points.length() as usize;
+        let mut buf = vec![0f32; len];
+        points.copy_to(&mut buf);
+        for i in (0..buf.len()).step_by(2) { if i+1 < buf.len() { pts.push(Vec2 { x: buf[i], y: buf[i+1] }); } }
+        let id = self.edges.len() as u32;
+        self.edges.push(Some(Edge { a, b, kind: EdgeKind::Polyline { points: pts }, stroke: None, stroke_width: 2.0 }));
+        self.geom_ver = self.geom_ver.wrapping_add(1);
+        Some(id)
+    }
     /// Return detected regions as JS array of { key, area, filled, points:[x,y,...] }
     pub fn get_regions(&mut self) -> JsValue {
         #[derive(Serialize)]

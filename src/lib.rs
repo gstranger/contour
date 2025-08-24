@@ -2,6 +2,8 @@ use wasm_bindgen::prelude::*;
 use js_sys::{Float32Array, Object, Uint32Array, Uint8Array, Reflect};
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, HashSet};
+mod algorithms;
+use crate::algorithms::regions::{Region, polygon_centroid};
 mod geometry;
 mod model;
 use crate::model::{Color, FillState, Node, HandleMode, Vec2, EdgeKind, Edge};
@@ -156,126 +158,7 @@ impl Graph {
 
     // Picking: returns { kind: "node"|"edge", id, dist, t? }
     pub fn pick(&self, x: f32, y: f32, tol: f32) -> JsValue {
-        let tol2 = tol * tol;
-        // Prefer nodes when within tolerance
-        let mut best_node: Option<(u32, f32)> = None; // (id, dist2)
-        for (i, n) in self.nodes.iter().enumerate() {
-            if let Some(n) = n {
-                let dx = n.x - x; let dy = n.y - y;
-                let d2 = dx*dx + dy*dy;
-                if d2 <= tol2 {
-                    if best_node.map_or(true, |(_, bd2)| d2 < bd2) {
-                        best_node = Some((i as u32, d2));
-                    }
-                }
-            }
-        }
-        if let Some((id, d2)) = best_node {
-            let mut obj = Object::new();
-            let _ = Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str("node"));
-            let _ = Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_f64(id as f64));
-            let _ = Reflect::set(&obj, &JsValue::from_str("dist"), &JsValue::from_f64(d2.sqrt() as f64));
-            return obj.into();
-        }
-
-        // Prefer handles over edges when within tolerance
-        // Handles
-        let mut best_handle: Option<(u32, u8, f32)> = None; // (edge_id, end 0|1, dist2)
-        for (i, e) in self.edges.iter().enumerate() {
-            if let Some(e) = e {
-                match e.kind {
-                    EdgeKind::Cubic { ha, hb, .. } => {
-                        let a = match self.nodes.get(e.a as usize).and_then(|n| *n) { Some(n) => n, None => continue };
-                        let b = match self.nodes.get(e.b as usize).and_then(|n| *n) { Some(n) => n, None => continue };
-                        let p1x = a.x + ha.x; let p1y = a.y + ha.y;
-                        let p2x = b.x + hb.x; let p2y = b.y + hb.y;
-                        let d1 = (p1x - x).powi(2) + (p1y - y).powi(2);
-                        if d1 <= tol2 && best_handle.map_or(true, |(_,_,bd)| d1 < bd) {
-                            best_handle = Some((i as u32, 0, d1));
-                        }
-                        let d2 = (p2x - x).powi(2) + (p2y - y).powi(2);
-                        if d2 <= tol2 && best_handle.map_or(true, |(_,_,bd)| d2 < bd) {
-                            best_handle = Some((i as u32, 1, d2));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        if let Some((edge_id, end, d2)) = best_handle {
-            let mut obj = Object::new();
-            let _ = Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str("handle"));
-            let _ = Reflect::set(&obj, &JsValue::from_str("edge"), &JsValue::from_f64(edge_id as f64));
-            let _ = Reflect::set(&obj, &JsValue::from_str("end"), &JsValue::from_f64(end as f64));
-            let _ = Reflect::set(&obj, &JsValue::from_str("dist"), &JsValue::from_f64(d2.sqrt() as f64));
-            return obj.into();
-        }
-
-        // Else check edges
-        let mut best_edge: Option<(u32, f32, f32)> = None; // (id, dist2, t)
-        for (i, e) in self.edges.iter().enumerate() {
-            if let Some(e) = e {
-                match e.kind {
-                    EdgeKind::Line => {
-                        let a = match self.nodes.get(e.a as usize).and_then(|n| *n) { Some(n) => n, None => continue };
-                        let b = match self.nodes.get(e.b as usize).and_then(|n| *n) { Some(n) => n, None => continue };
-                        let (d2, t) = seg_distance_sq(x, y, a.x, a.y, b.x, b.y);
-                        if d2 <= tol2 {
-                            if best_edge.map_or(true, |(_, bd2, _)| d2 < bd2) {
-                                best_edge = Some((i as u32, d2, t));
-                            }
-                        }
-                    }
-                    EdgeKind::Cubic { ha, hb, .. } => {
-                        let a = match self.nodes.get(e.a as usize).and_then(|n| *n) { Some(n) => n, None => continue };
-                        let b = match self.nodes.get(e.b as usize).and_then(|n| *n) { Some(n) => n, None => continue };
-                        let p1x = a.x + ha.x; let p1y = a.y + ha.y;
-                        let p2x = b.x + hb.x; let p2y = b.y + hb.y;
-                        let (d2, t) = cubic_distance_sq(x, y, a.x, a.y, p1x, p1y, p2x, p2y, b.x, b.y);
-                        if d2 <= tol2 {
-                            if best_edge.map_or(true, |(_, bd2, _)| d2 < bd2) {
-                                best_edge = Some((i as u32, d2, t));
-                            }
-                        }
-                    }
-                    EdgeKind::Polyline { ref points } => {
-                        let a = match self.nodes.get(e.a as usize).and_then(|n| *n) { Some(n) => n, None => continue };
-                        let b = match self.nodes.get(e.b as usize).and_then(|n| *n) { Some(n) => n, None => continue };
-                        // Build chain: A -> points... -> B
-                        let mut prevx = a.x; let mut prevy = a.y;
-                        let mut length = 0.0f32;
-                        let mut segs: Vec<(f32,f32,f32,f32,f32)> = Vec::new(); // (x1,y1,x2,y2,segLen)
-                        for p in points {
-                            let x2 = p.x; let y2 = p.y;
-                            let seg_len = ((x2 - prevx).powi(2) + (y2 - prevy).powi(2)).sqrt();
-                            if seg_len > 0.0 { segs.push((prevx, prevy, x2, y2, seg_len)); length += seg_len; }
-                            prevx = x2; prevy = y2;
-                        }
-                        let seg_len = ((b.x - prevx).powi(2) + (b.y - prevy).powi(2)).sqrt();
-                        if seg_len > 0.0 { segs.push((prevx, prevy, b.x, b.y, seg_len)); length += seg_len; }
-                        let mut acc = 0.0f32;
-                        for (x1,y1,x2,y2,seg_len) in segs.into_iter() {
-                            let (d2, tseg) = seg_distance_sq(x, y, x1, y1, x2, y2);
-                            if d2 <= tol2 {
-                                let t_along = if length > 0.0 { (acc + tseg*seg_len) / length } else { 0.0 };
-                                if best_edge.map_or(true, |(_, bd2, _)| d2 < bd2) { best_edge = Some((i as u32, d2, t_along)); }
-                            }
-                            acc += seg_len;
-                        }
-                    }
-                }
-            }
-        }
-        if let Some((id, d2, t)) = best_edge {
-            let mut obj = Object::new();
-            let _ = Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str("edge"));
-            let _ = Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_f64(id as f64));
-            let _ = Reflect::set(&obj, &JsValue::from_str("t"), &JsValue::from_f64(t as f64));
-            let _ = Reflect::set(&obj, &JsValue::from_str("dist"), &JsValue::from_f64(d2.sqrt() as f64));
-            return obj.into();
-        }
-
-        JsValue::UNDEFINED
+        crate::algorithms::picking::pick_impl(self, x, y, tol)
     }
 
     // Serialize graph to JSON object: { nodes:[{id,x,y}], edges:[{id,a,b}] }
@@ -422,9 +305,8 @@ fn cubic_distance_sq(px: f32, py: f32,
     (best_d2, best_t)
 }
 
-#[derive(Clone)]
-struct Region { key: u32, points: Vec<Vec2>, area: f32 }
-
+// Region algorithms moved to modules (algorithms::regions)
+/*
 impl Graph {
     fn compute_regions(&self) -> Vec<Region> {
         #[derive(Clone, Copy, Debug)]
@@ -550,7 +432,9 @@ impl Graph {
         regions
     }
 }
+*/
 
+/*
 impl Graph {
     fn find_simple_cycles(&self) -> Vec<Region> {
         // Build adjacency of node ids
@@ -655,55 +539,9 @@ impl Graph {
         regions
     }
 }
+*/
 
-fn polygon_area(poly: &Vec<Vec2>) -> f32 {
-    let mut a = 0.0;
-    for i in 0..poly.len() {
-        let j = (i + 1) % poly.len();
-        a += poly[i].x * poly[j].y - poly[j].x * poly[i].y;
-    }
-    0.5 * a
-}
-
-fn polygon_centroid(poly: &Vec<Vec2>) -> (f32, f32) {
-    let mut cx = 0.0; let mut cy = 0.0; let mut a = 0.0;
-    for i in 0..poly.len() {
-        let j = (i + 1) % poly.len();
-        let cross = poly[i].x * poly[j].y - poly[j].x * poly[i].y;
-        a += cross;
-        cx += (poly[i].x + poly[j].x) * cross;
-        cy += (poly[i].y + poly[j].y) * cross;
-    }
-    let a = a * 0.5;
-    if a.abs() < 1e-6 { return (poly[0].x, poly[0].y); }
-    (cx / (6.0 * a), cy / (6.0 * a))
-}
-
-fn region_key_from_edges(seq: &Vec<u32>) -> u32 {
-    if seq.is_empty() { return 0; }
-    let n = seq.len();
-    // Consider both directions
-    let mut rev = seq.clone(); rev.reverse();
-    fn min_rot_u32(seq: &Vec<u32>) -> Vec<u32> {
-        let n = seq.len();
-        let mut best: Option<Vec<u32>> = None;
-        for s in 0..n {
-            let mut rot = Vec::with_capacity(n);
-            for k in 0..n { rot.push(seq[(s+k)%n]); }
-            if best.as_ref().map_or(true, |b| rot < *b) { best = Some(rot); }
-        }
-        best.unwrap()
-    }
-    let fwd = min_rot_u32(seq);
-    let bwd = min_rot_u32(&rev);
-    let canon = if fwd <= bwd { fwd } else { bwd };
-    // FNV-1a hash over u32 ids
-    let mut hash: u32 = 0x811C9DC5;
-    for x in canon {
-        for b in x.to_le_bytes() { hash ^= b as u32; hash = hash.wrapping_mul(0x01000193); }
-    }
-    hash
-}
+// helpers moved into algorithms::regions
 
 /// Optional: better error messages in the browser console
 #[wasm_bindgen]

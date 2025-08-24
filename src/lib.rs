@@ -6,6 +6,8 @@ mod algorithms;
 use crate::algorithms::regions::{Region, polygon_centroid};
 mod geometry;
 mod model;
+mod json;
+mod svg;
 use crate::model::{Color, FillState, Node, HandleMode, Vec2, EdgeKind, Edge};
 
 // Types moved to model.rs
@@ -163,74 +165,12 @@ impl Graph {
 
     // Serialize graph to JSON object: { nodes:[{id,x,y}], edges:[{id,a,b}] }
     pub fn to_json(&self) -> JsValue {
-        #[derive(Serialize)]
-        struct NodeSer { id: u32, x: f32, y: f32 }
-        #[derive(Serialize)]
-        #[serde(tag = "kind", rename_all = "lowercase")]
-        enum EdgeSerKind { Line, Cubic { ha: Vec2, hb: Vec2, mode: HandleMode }, Polyline { points: Vec<Vec2> } }
-        #[derive(Serialize)]
-        struct EdgeSer { id: u32, a: u32, b: u32, #[serde(flatten)] kind: EdgeSerKind, stroke: Option<Color>, width: f32 }
-        #[derive(Serialize)]
-        struct FillSer { key: u32, filled: bool, color: Option<Color> }
-        #[derive(Serialize)]
-        struct DocSer { version: u32, nodes: Vec<NodeSer>, edges: Vec<EdgeSer>, fills: Vec<FillSer> }
-
-        let mut nodes = Vec::new();
-        for (i, n) in self.nodes.iter().enumerate() {
-            if let Some(n) = n { nodes.push(NodeSer { id: i as u32, x: n.x, y: n.y }); }
-        }
-        let mut edges = Vec::new();
-        for (i, e) in self.edges.iter().enumerate() {
-            if let Some(e) = e {
-                let kind = match &e.kind {
-                    EdgeKind::Line => EdgeSerKind::Line,
-                    EdgeKind::Cubic { ha, hb, mode } => EdgeSerKind::Cubic { ha: *ha, hb: *hb, mode: *mode },
-                    EdgeKind::Polyline { points } => EdgeSerKind::Polyline { points: points.clone() },
-                };
-                edges.push(EdgeSer { id: i as u32, a: e.a, b: e.b, kind, stroke: e.stroke, width: e.stroke_width });
-            }
-        }
-        let mut fills: Vec<FillSer> = Vec::new();
-        for (k, v) in self.fills.iter() { fills.push(FillSer { key: *k, filled: v.filled, color: v.color }); }
-        serde_wasm_bindgen::to_value(&DocSer { version: 1, nodes, edges, fills }).unwrap_or(JsValue::NULL)
+        crate::json::to_json_impl(self)
     }
 
     // Load from JSON object with the same shape. Returns true on success.
     pub fn from_json(&mut self, v: JsValue) -> bool {
-        #[derive(Deserialize)]
-        struct NodeDe { id: u32, x: f32, y: f32 }
-        #[derive(Deserialize)]
-        #[serde(tag = "kind", rename_all = "lowercase")]
-        enum EdgeDeKind { Line, Cubic { ha: Vec2, hb: Vec2, mode: Option<HandleMode> }, Polyline { points: Vec<Vec2> } }
-        #[derive(Deserialize)]
-        struct EdgeDe { id: u32, a: u32, b: u32, #[serde(flatten)] kind: Option<EdgeDeKind>, stroke: Option<Color>, width: Option<f32> }
-        #[derive(Deserialize)]
-        struct FillDe { key: u32, filled: bool, color: Option<Color> }
-        #[derive(Deserialize)]
-        struct DocDe { version: Option<u32>, nodes: Vec<NodeDe>, edges: Vec<EdgeDe>, fills: Option<Vec<FillDe>> }
-
-        let parsed: Result<DocDe, _> = serde_wasm_bindgen::from_value(v);
-        if let Ok(doc) = parsed {
-            let max_node = doc.nodes.iter().map(|n| n.id).max().unwrap_or(0);
-            let max_edge = doc.edges.iter().map(|e| e.id).max().unwrap_or(0);
-            self.nodes = vec![None; (max_node as usize) + 1];
-            self.edges = vec![None; (max_edge as usize) + 1];
-            self.fills.clear();
-            for n in doc.nodes { self.nodes[n.id as usize] = Some(Node { x: n.x, y: n.y }); }
-            for e in doc.edges {
-                let kind = match e.kind.unwrap_or(EdgeDeKind::Line) {
-                    EdgeDeKind::Line => EdgeKind::Line,
-                    EdgeDeKind::Cubic { ha, hb, mode } => EdgeKind::Cubic { ha, hb, mode: mode.unwrap_or(HandleMode::Free) },
-                    EdgeDeKind::Polyline { points } => EdgeKind::Polyline { points },
-                };
-                self.edges[e.id as usize] = Some(Edge { a: e.a, b: e.b, kind, stroke: e.stroke, stroke_width: e.width.unwrap_or(2.0) });
-            }
-            if let Some(fills) = doc.fills { for f in fills { self.fills.insert(f.key, FillState { filled: f.filled, color: f.color }); } }
-            self.geom_ver = self.geom_ver.wrapping_add(1);
-            true
-        } else {
-            false
-        }
+        crate::json::from_json_impl(self, v)
     }
 
     // Clear the graph

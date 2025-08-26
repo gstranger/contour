@@ -47,7 +47,34 @@ impl Graph {
     }
 
     // Picking + JSON + SVG
-    pub fn pick(&self, x: f32, y: f32, tol: f32) -> JsValue { if let Some(p)=self.inner.pick(x,y,tol) { serde_wasm_bindgen::to_value(&p).unwrap() } else { JsValue::NULL } }
+    pub fn pick(&self, x: f32, y: f32, tol: f32) -> JsValue {
+        if let Some(p) = self.inner.pick(x, y, tol) {
+            // Flatten to { kind: 'node'|'edge'|'handle', ... }
+            let obj = crate::interop::new_obj();
+            match p {
+                contour::Pick::Node { id, dist } => {
+                    crate::interop::set_kv(&obj, "kind", &JsValue::from_str("node"));
+                    crate::interop::set_kv(&obj, "id", &JsValue::from_f64(id as f64));
+                    crate::interop::set_kv(&obj, "dist", &JsValue::from_f64(dist as f64));
+                }
+                contour::Pick::Edge { id, t, dist } => {
+                    crate::interop::set_kv(&obj, "kind", &JsValue::from_str("edge"));
+                    crate::interop::set_kv(&obj, "id", &JsValue::from_f64(id as f64));
+                    crate::interop::set_kv(&obj, "t", &JsValue::from_f64(t as f64));
+                    crate::interop::set_kv(&obj, "dist", &JsValue::from_f64(dist as f64));
+                }
+                contour::Pick::Handle { edge, end, dist } => {
+                    crate::interop::set_kv(&obj, "kind", &JsValue::from_str("handle"));
+                    crate::interop::set_kv(&obj, "edge", &JsValue::from_f64(edge as f64));
+                    crate::interop::set_kv(&obj, "end", &JsValue::from_f64(end as f64));
+                    crate::interop::set_kv(&obj, "dist", &JsValue::from_f64(dist as f64));
+                }
+            }
+            obj.into()
+        } else {
+            JsValue::NULL
+        }
+    }
     pub fn to_json(&self) -> JsValue { serde_wasm_bindgen::to_value(&self.inner.to_json_value()).unwrap() }
     pub fn from_json(&mut self, v: JsValue) -> bool { match serde_wasm_bindgen::from_value::<serde_json::Value>(v) { Ok(val)=> self.inner.from_json_value(val), Err(_)=> false } }
     pub fn clear(&mut self) { self.inner.clear(); }

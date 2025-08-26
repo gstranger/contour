@@ -5,7 +5,6 @@ pub fn flatten_cubic(points: &mut Vec<Vec2>,
     x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32,
     tol: f32, depth: u32)
 {
-    // Flatness: max distance of control points to line (x0,y0)-(x3,y3)
     let d1 = dist_point_to_seg_sq(x1, y1, x0, y0, x3, y3);
     let d2 = dist_point_to_seg_sq(x2, y2, x0, y0, x3, y3);
     let tol2 = tol * tol;
@@ -13,7 +12,6 @@ pub fn flatten_cubic(points: &mut Vec<Vec2>,
         points.push(Vec2 { x: x3, y: y3 });
         return;
     }
-    // Subdivide at t=0.5 (de Casteljau)
     let x01 = 0.5*(x0 + x1); let y01 = 0.5*(y0 + y1);
     let x12 = 0.5*(x1 + x2); let y12 = 0.5*(y1 + y2);
     let x23 = 0.5*(x2 + x3); let y23 = 0.5*(y2 + y3);

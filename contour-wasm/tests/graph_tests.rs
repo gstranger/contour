@@ -1,5 +1,5 @@
 use wasm_bindgen_test::*;
-use contour::Graph;
+use contour_wasm::Graph;
 use js_sys::{Reflect, Uint32Array, Float32Array};
 use wasm_bindgen::JsValue;
 use serde::Deserialize;
@@ -158,3 +158,4 @@ fn svg_import_export_basic() {
     assert_eq!(arr.len(), 4);
     assert!(arr.iter().all(|s| s.starts_with("M ")));
 }
+

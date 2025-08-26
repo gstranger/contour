@@ -1,4 +1,4 @@
-use crate::model::Vec2; // kept for signature parity if needed
+use crate::model::Vec2;
 
 pub fn seg_distance_sq(px: f32, py: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> (f32, f32) {
     let vx = x2 - x1; let vy = y2 - y1;
@@ -27,7 +27,6 @@ pub fn dist_point_to_seg_sq(px: f32, py: f32, x1: f32, y1: f32, x2: f32, y2: f32
 
 pub fn cubic_distance_sq(px: f32, py: f32,
     x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32) -> (f32, f32) {
-    // Approximate by sampling
     let mut best_d2 = f32::INFINITY;
     let mut best_t = 0.0;
     let n = 32;

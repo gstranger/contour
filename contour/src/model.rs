@@ -6,7 +6,7 @@ pub struct Color { pub r: u8, pub g: u8, pub b: u8, pub a: u8 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct FillState { pub filled: bool, pub color: Option<Color> }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Node { pub x: f32, pub y: f32 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

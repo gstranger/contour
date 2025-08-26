@@ -11,10 +11,11 @@ It exposes a small API to JavaScript for creating a graph, connecting nodes, lis
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack
 
-# 2) Build the WASM bundle (from contour/)
-wasm-pack build --target web
+# 2) Build the WASM bundle (from contour-wasm/)
+# outputs to ../pkg so the web demo can import it
+cd contour-wasm && wasm-pack build --target web --out-dir ../pkg && cd -
 
-# 3) Serve statically (from contour/)
+# 3) Serve statically (from repo root)
 python3 -m http.server
 
 # 4) Open the demo in your browser
@@ -31,10 +32,10 @@ This produces a `pkg/` folder with JS/WASM bindings that the demo imports.
 
 ## Build
 
-From the project root (`contour/`):
+From the workspace `contour-wasm/` crate:
 
 ```bash
-wasm-pack build --target web
+wasm-pack build --target web --out-dir ../pkg
 ```
 
 This creates a `pkg/` folder with JS/WASM bindings.
@@ -92,5 +93,5 @@ Demo controls:
 ## Notes
 
 - The crate is built as a `cdylib` for WebAssembly and uses `wasm-bindgen` for bindings.
-- The simple web demo imports from `./pkg/contour.js`, which is created by `wasm-pack`.
+- The simple web demo imports from `./pkg/contour_wasm.js`, which is created by building the `contour-wasm` crate.
 - JSON `to_json` now includes `version` and `fills` arrays; `from_json` reads them.

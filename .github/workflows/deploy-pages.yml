@@ -1,0 +1,71 @@
+name: Deploy Web Demo to Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build demo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+
+      - name: Build WASM package (root pkg)
+        run: |
+          set -euxo pipefail
+          cd contour-wasm
+          # Output to repo-root pkg so web/index.html can import ../pkg/...
+          wasm-pack build --release --target web --out-dir ../pkg
+
+      - name: Assemble dist (demo at site root)
+        run: |
+          set -euxo pipefail
+          rm -rf dist
+          mkdir -p dist
+          # Copy WASM pkg to /pkg at site root
+          cp -R pkg dist/pkg
+          # Place the demo index at site root and adjust the import path
+          cp web/index.html dist/index.html
+          sed -i.bak 's#../pkg/#./pkg/#g' dist/index.html || true
+          rm -f dist/index.html.bak
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

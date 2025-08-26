@@ -8,6 +8,7 @@ mod geometry;
 mod model;
 mod json;
 mod svg;
+mod interop;
 use crate::model::{Color, FillState, Node, HandleMode, Vec2, EdgeKind, Edge};
 
 // Types moved to model.rs
@@ -114,11 +115,11 @@ impl Graph {
                 positions.push(n.y);
             }
         }
-        let ids_arr = Uint32Array::from(ids.as_slice());
-        let pos_arr = Float32Array::from(positions.as_slice());
-        let obj = Object::new();
-        let _ = Reflect::set(&obj, &JsValue::from_str("ids"), &ids_arr);
-        let _ = Reflect::set(&obj, &JsValue::from_str("positions"), &pos_arr);
+        let ids_arr = crate::interop::arr_u32(ids.as_slice());
+        let pos_arr = crate::interop::arr_f32(positions.as_slice());
+        let obj = crate::interop::new_obj();
+        crate::interop::set_kv(&obj, "ids", &ids_arr.into());
+        crate::interop::set_kv(&obj, "positions", &pos_arr.into());
         obj.into()
     }
 
@@ -144,17 +145,17 @@ impl Graph {
                 }
             }
         }
-        let ids_arr = Uint32Array::from(ids.as_slice());
-        let ep_arr = Uint32Array::from(endpoints.as_slice());
-        let kinds_arr = Uint8Array::from(kinds.as_slice());
-        let rgba_arr = Uint8Array::from(stroke_rgba.as_slice());
-        let width_arr = Float32Array::from(stroke_widths.as_slice());
-        let obj = Object::new();
-        let _ = Reflect::set(&obj, &JsValue::from_str("ids"), &ids_arr);
-        let _ = Reflect::set(&obj, &JsValue::from_str("endpoints"), &ep_arr);
-        let _ = Reflect::set(&obj, &JsValue::from_str("kinds"), &kinds_arr);
-        let _ = Reflect::set(&obj, &JsValue::from_str("stroke_rgba"), &rgba_arr);
-        let _ = Reflect::set(&obj, &JsValue::from_str("stroke_widths"), &width_arr);
+        let ids_arr = crate::interop::arr_u32(ids.as_slice());
+        let ep_arr = crate::interop::arr_u32(endpoints.as_slice());
+        let kinds_arr = crate::interop::arr_u8(kinds.as_slice());
+        let rgba_arr = crate::interop::arr_u8(stroke_rgba.as_slice());
+        let width_arr = crate::interop::arr_f32(stroke_widths.as_slice());
+        let obj = crate::interop::new_obj();
+        crate::interop::set_kv(&obj, "ids", &ids_arr.into());
+        crate::interop::set_kv(&obj, "endpoints", &ep_arr.into());
+        crate::interop::set_kv(&obj, "kinds", &kinds_arr.into());
+        crate::interop::set_kv(&obj, "stroke_rgba", &rgba_arr.into());
+        crate::interop::set_kv(&obj, "stroke_widths", &width_arr.into());
         obj.into()
     }
 
@@ -938,8 +939,7 @@ impl Graph {
         crate::svg::add_svg_path_with_style_impl(self, d, Some((r,g,b,a,width)))
     }
 
-    /// Export edges as independent SVG path fragments (M/L or M/C). Returns JS array of strings.
-    pub fn to_svg_paths(&self) -> JsValue { crate::svg::to_svg_paths_impl(self) }
+    // (moved) to_svg_paths delegated above
 
     /*
         let mut i = 0usize;
@@ -1060,152 +1060,8 @@ impl Graph {
         if edges_added > 0 { self.geom_ver = self.geom_ver.wrapping_add(1); }
         edges_added
     }
-
-    /// Append geometry from an SVG path with a stroke style applied to created edges.
-    /// Returns number of edges added.
-    pub fn add_svg_path_with_style(&mut self, d: &str, r: u8, g: u8, b: u8, a: u8, width: f32) -> u32 {
-        let mut i = 0usize;
-        let bytes = d.as_bytes();
-        let mut cur = (0.0f32, 0.0f32);
-        let mut start_sub = (0.0f32, 0.0f32);
-        let mut last_cmd = b'M';
-        let mut edges_added = 0u32;
-
-        let mut node_cache: HashMap<(i32, i32), u32> = HashMap::new();
-        let q = |x: f32, y: f32| ((x * 100.0).round() as i32, (y * 100.0).round() as i32);
-        let mut get_node = |x: f32, y: f32, this: &mut Graph| -> u32 {
-            let key = q(x, y);
-            if let Some(&id) = node_cache.get(&key) { return id; }
-            let id = this.add_node(x, y);
-            node_cache.insert(key, id);
-            id
-        };
-
-        fn skip_ws(bytes: &[u8], i: &mut usize) {
-            while *i < bytes.len() {
-                let c = bytes[*i];
-                if c == b' ' || c == b'\n' || c == b'\t' || c == b',' { *i += 1; } else { break; }
-            }
-        }
-        fn parse_num(bytes: &[u8], i: &mut usize) -> Option<f32> {
-            skip_ws(bytes, i);
-            let start = *i;
-            let mut had = false;
-            while *i < bytes.len() {
-                let c = bytes[*i];
-                if (c as char).is_ascii_digit() || c == b'.' || c == b'-' || c == b'+' || c == b'e' || c == b'E' {
-                    had = true; *i += 1;
-                } else { break; }
-            }
-            if !had { return None; }
-            let s = std::str::from_utf8(&bytes[start..*i]).ok()?;
-            s.parse::<f32>().ok()
-        }
-
-        while i < bytes.len() {
-            skip_ws(bytes, &mut i);
-            if i >= bytes.len() { break; }
-            let c = bytes[i];
-            let is_cmd = matches!(c, b'M'|b'm'|b'L'|b'l'|b'C'|b'c'|b'Z'|b'z');
-            let cmd = if is_cmd { i += 1; c } else { last_cmd };
-            last_cmd = cmd;
-
-            match cmd {
-                b'M'|b'm' => {
-                    let mut x = parse_num(bytes, &mut i).unwrap_or(cur.0);
-                    let mut y = parse_num(bytes, &mut i).unwrap_or(cur.1);
-                    if cmd == b'm' { x += cur.0; y += cur.1; }
-                    cur = (x, y); start_sub = cur;
-                    loop {
-                        skip_ws(bytes, &mut i);
-                        if i >= bytes.len() { break; }
-                        let peek = bytes[i];
-                        if matches!(peek, b'M'|b'm'|b'L'|b'l'|b'C'|b'c'|b'Z'|b'z') { break; }
-                        let mut nx = match parse_num(bytes, &mut i) { Some(v) => v, None => break };
-                        let mut ny = match parse_num(bytes, &mut i) { Some(v) => v, None => break };
-                        if cmd == b'm' { nx += cur.0; ny += cur.1; }
-                        let a_id = get_node(cur.0, cur.1, self);
-                        let b_id = get_node(nx, ny, self);
-                        if let Some(eid) = self.add_edge(a_id, b_id) { self.set_edge_style(eid, r, g, b, a, width); edges_added += 1; }
-                        cur = (nx, ny);
-                    }
-                }
-                b'L'|b'l' => {
-                    loop {
-                        let mut x = match parse_num(bytes, &mut i) { Some(v) => v, None => break };
-                        let mut y = match parse_num(bytes, &mut i) { Some(v) => v, None => break };
-                        if cmd == b'l' { x += cur.0; y += cur.1; }
-                        let a_id = get_node(cur.0, cur.1, self);
-                        let b_id = get_node(x, y, self);
-                        if let Some(eid) = self.add_edge(a_id, b_id) { self.set_edge_style(eid, r, g, b, a, width); edges_added += 1; }
-                        cur = (x, y);
-                        skip_ws(bytes, &mut i);
-                        if i >= bytes.len() { break; }
-                        let peek = bytes[i];
-                        if matches!(peek, b'M'|b'm'|b'L'|b'l'|b'C'|b'c'|b'Z'|b'z') { break; }
-                    }
-                }
-                b'C'|b'c' => {
-                    loop {
-                        let mut x1 = match parse_num(bytes, &mut i) { Some(v) => v, None => break };
-                        let mut y1 = match parse_num(bytes, &mut i) { Some(v) => v, None => break };
-                        let mut x2 = match parse_num(bytes, &mut i) { Some(v) => v, None => break };
-                        let mut y2 = match parse_num(bytes, &mut i) { Some(v) => v, None => break };
-                        let mut x = match parse_num(bytes, &mut i) { Some(v) => v, None => break };
-                        let mut y = match parse_num(bytes, &mut i) { Some(v) => v, None => break };
-                        if cmd == b'c' { x1 += cur.0; y1 += cur.1; x2 += cur.0; y2 += cur.1; x += cur.0; y += cur.1; }
-                        let a_id = get_node(cur.0, cur.1, self);
-                        let b_id = get_node(x, y, self);
-                        if let Some(eid) = self.add_edge(a_id, b_id) {
-                            self.set_edge_cubic(eid, x1, y1, x2, y2);
-                            self.set_edge_style(eid, r, g, b, a, width);
-                            edges_added += 1;
-                        }
-                        cur = (x, y);
-                        skip_ws(bytes, &mut i);
-                        if i >= bytes.len() { break; }
-                        let peek = bytes[i];
-                        if matches!(peek, b'M'|b'm'|b'L'|b'l'|b'C'|b'c'|b'Z'|b'z') { break; }
-                    }
-                }
-                b'Z'|b'z' => {
-                    let a_id = get_node(cur.0, cur.1, self);
-                    let b_id = get_node(start_sub.0, start_sub.1, self);
-                    if a_id != b_id { if let Some(eid) = self.add_edge(a_id, b_id) { self.set_edge_style(eid, r, g, b, a, width); edges_added += 1; } }
-                    cur = start_sub;
-                }
-                _ => {}
-            }
-        }
-        if edges_added > 0 { self.geom_ver = self.geom_ver.wrapping_add(1); }
-        edges_added
-    }
+    */
 
     /// Export edges as independent SVG path fragments (M/L or M/C). Returns JS array of strings.
-    pub fn to_svg_paths(&self) -> JsValue {
-        let mut paths: Vec<String> = Vec::new();
-        for e in self.edges.iter() {
-            if let Some(edge) = e {
-                let a = match self.nodes.get(edge.a as usize).and_then(|n| *n) { Some(n) => n, None => continue };
-                let b = match self.nodes.get(edge.b as usize).and_then(|n| *n) { Some(n) => n, None => continue };
-                match &edge.kind {
-                    EdgeKind::Line => {
-                        paths.push(format!("M {} {} L {} {}", a.x, a.y, b.x, b.y));
-                    }
-                    EdgeKind::Cubic { ha, hb, .. } => {
-                        let p1x = a.x + ha.x; let p1y = a.y + ha.y;
-                        let p2x = b.x + hb.x; let p2y = b.y + hb.y;
-                        paths.push(format!("M {} {} C {} {}, {} {}, {} {}", a.x, a.y, p1x, p1y, p2x, p2y, b.x, b.y));
-                    }
-                    EdgeKind::Polyline { points } => {
-                        let mut d = format!("M {} {}", a.x, a.y);
-                        for p in points { d.push_str(&format!(" L {} {}", p.x, p.y)); }
-                        d.push_str(&format!(" L {} {}", b.x, b.y));
-                        paths.push(d);
-                    }
-                }
-            }
-        }
-        serde_wasm_bindgen::to_value(&paths).unwrap_or(JsValue::NULL)
-    }
+    pub fn to_svg_paths(&self) -> JsValue { crate::svg::to_svg_paths_impl(self) }
 }

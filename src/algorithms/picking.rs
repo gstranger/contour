@@ -1,5 +1,6 @@
 use wasm_bindgen::JsValue;
-use js_sys::{Object, Reflect};
+use js_sys::Object;
+use crate::interop::{new_obj, set_kv};
 use crate::model::{EdgeKind};
 use crate::geometry::math::{seg_distance_sq, cubic_distance_sq};
 
@@ -21,10 +22,10 @@ pub(crate) fn pick_impl(g: &Graph, x: f32, y: f32, tol: f32) -> JsValue {
         }
     }
     if let Some((id, d2)) = best_node {
-        let mut obj = Object::new();
-        let _ = Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str("node"));
-        let _ = Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_f64(id as f64));
-        let _ = Reflect::set(&obj, &JsValue::from_str("dist"), &JsValue::from_f64(d2.sqrt() as f64));
+        let obj = new_obj();
+        set_kv(&obj, "kind", &JsValue::from_str("node"));
+        set_kv(&obj, "id", &JsValue::from_f64(id as f64));
+        set_kv(&obj, "dist", &JsValue::from_f64(d2.sqrt() as f64));
         return obj.into();
     }
 
@@ -53,11 +54,11 @@ pub(crate) fn pick_impl(g: &Graph, x: f32, y: f32, tol: f32) -> JsValue {
         }
     }
     if let Some((edge_id, end, d2)) = best_handle {
-        let mut obj = Object::new();
-        let _ = Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str("handle"));
-        let _ = Reflect::set(&obj, &JsValue::from_str("edge"), &JsValue::from_f64(edge_id as f64));
-        let _ = Reflect::set(&obj, &JsValue::from_str("end"), &JsValue::from_f64(end as f64));
-        let _ = Reflect::set(&obj, &JsValue::from_str("dist"), &JsValue::from_f64(d2.sqrt() as f64));
+        let obj = new_obj();
+        set_kv(&obj, "kind", &JsValue::from_str("handle"));
+        set_kv(&obj, "edge", &JsValue::from_f64(edge_id as f64));
+        set_kv(&obj, "end", &JsValue::from_f64(end as f64));
+        set_kv(&obj, "dist", &JsValue::from_f64(d2.sqrt() as f64));
         return obj.into();
     }
 
@@ -117,13 +118,12 @@ pub(crate) fn pick_impl(g: &Graph, x: f32, y: f32, tol: f32) -> JsValue {
         }
     }
     if let Some((id, d2, t)) = best_edge {
-        let mut obj = Object::new();
-        let _ = Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str("edge"));
-        let _ = Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_f64(id as f64));
-        let _ = Reflect::set(&obj, &JsValue::from_str("t"), &JsValue::from_f64(t as f64));
-        let _ = Reflect::set(&obj, &JsValue::from_str("dist"), &JsValue::from_f64(d2.sqrt() as f64));
+        let obj = new_obj();
+        set_kv(&obj, "kind", &JsValue::from_str("edge"));
+        set_kv(&obj, "id", &JsValue::from_f64(id as f64));
+        set_kv(&obj, "t", &JsValue::from_f64(t as f64));
+        set_kv(&obj, "dist", &JsValue::from_f64(d2.sqrt() as f64));
         return obj.into();
     }
     JsValue::UNDEFINED
 }
-

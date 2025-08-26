@@ -102,6 +102,7 @@
         freePoints: null, // [x0,y0,x1,y1,...]
         edgeStyle: {}, // fallback JS-side style map: id -> { color:[r,g,b,a], width }
         svgStrokes: [], // [{ d, color:[r,g,b,a], width, cap, join }]
+        svgFills: [],   // [{ d, color:[r,g,b,a], rule, transform }]
         showRef: false,
         transform: { s: 1, tx: 0, ty: 0 },
       };
@@ -152,7 +153,30 @@
         // Keep properties panel in sync with selection
         refreshPropertiesPanel();
 
-        // Fills: draw behind edges
+        // SVG fills imported: draw behind everything, aligned with current transform
+        if (Array.isArray(state.svgFills) && state.svgFills.length > 0) {
+          ctx.save();
+          const t = state.transform || { s: 1, tx: 0, ty: 0 };
+          ctx.translate(t.tx, t.ty);
+          ctx.scale(t.s, t.s);
+          for (const f of state.svgFills) {
+            try {
+              ctx.save();
+              if (f.transform && typeof DOMMatrix === 'function') {
+                const m = new DOMMatrix(String(f.transform));
+                ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
+              }
+              const p = new Path2D(f.d);
+              const [rr,gg,bb,aa] = f.color;
+              ctx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${Math.max(0, Math.min(1, aa/255))})`;
+              if (typeof ctx.fill === 'function' && ctx.fill.length >= 2) ctx.fill(p, f.rule || 'nonzero'); else ctx.fill(p);
+              ctx.restore();
+            } catch {}
+          }
+          ctx.restore();
+        }
+
+        // Fills: draw behind edges (engine regions)
         const regions = state.regions;
         if (regions && Array.isArray(regions)) {
           ctx.save();
@@ -1020,10 +1044,24 @@
           let added = 0;
           const imported = [];
           const newSvgStrokes = [];
+          const newSvgFills = [];
+          // Hidden SVG probe for robust isPointInFill tests
+          let probe = null;
+          try {
+            const root = doc.querySelector('svg');
+            const viewBox = root ? (root.getAttribute('viewBox') || '0 0 2048 2048') : '0 0 2048 2048';
+            probe = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            probe.setAttribute('viewBox', viewBox);
+            probe.setAttribute('width', '0'); probe.setAttribute('height', '0');
+            probe.style.position = 'absolute'; probe.style.left = '-99999px'; probe.style.top = '-99999px';
+            document.body.appendChild(probe);
+          } catch { probe = null; }
           for (const p of paths) {
             const d = p.getAttribute('d');
             if (!d || !d.trim()) continue;
             const { color } = resolveFillAndOpacity(p);
+            const rule = resolveFillRule(p);
+            const transform = p.getAttribute('transform') || null;
             const { strokeColor, strokeWidth } = resolveStroke(p);
             const before = new Set(Array.from((g.get_edge_data().ids) || []));
             try {
@@ -1047,7 +1085,20 @@
                 // Also record for reference overlay rendering
                 newSvgStrokes.push({ d, color: [rr|0, gg|0, bb|0, aa|0], width: Math.max(0.5, strokeWidth), cap: (p.getAttribute('stroke-linecap')||'round'), join: (p.getAttribute('stroke-linejoin')||'round') });
               }
-              imported.push({ d, color });
+              // Create a probe path element for SVGGeometryElement.isPointInFill if available
+              let el = null;
+              try {
+                if (probe) {
+                  el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                  el.setAttribute('d', d);
+                  if (transform) el.setAttribute('transform', transform);
+                  el.setAttribute('fill', (color && Array.isArray(color)) ? `rgba(${color[0]},${color[1]},${color[2]},1)` : '#000');
+                  el.setAttribute('fill-rule', rule || 'nonzero');
+                  probe.appendChild(el);
+                }
+              } catch { el = null; }
+              imported.push({ d, color, rule, transform, el });
+              if (color) newSvgFills.push({ d, color, rule, transform });
             } catch (e) { console.warn('add_svg_path failed', e); }
           }
           // Map fills (if any) to regions
@@ -1055,30 +1106,116 @@
             const regionsVal = g.get_regions();
             let regions = [];
             try { regions = JSON.parse(JSON.stringify(regionsVal)); } catch {}
-            for (const imp of imported) {
-              if (!imp.color) continue;
+            // Normalize context transform to identity for hit-testing
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            // Detect if isPointInPath(Path2D, ...) works in this browser; Safari may be flaky
+            let pathHitWorks = false;
+            try {
+              const testP = new Path2D('M -1 -1 L 1 -1 L 1 1 L -1 1 z');
+              pathHitWorks = !!ctx.isPointInPath(testP, 0, 0, 'nonzero') || !!ctx.isPointInPath(testP, 0, 0);
+            } catch { pathHitWorks = false; }
+            // Tiny raster fallback for hit-testing when API is unsupported
+            const raster = (() => {
+              const S = 9; const K = 4; // 9x9 pixels, 4x supersample for stability
+              const c = document.createElement('canvas'); c.width = S; c.height = S;
+              return { S, K, c, ctx: c.getContext('2d') };
+            })();
+            function rasterHit(path2d, px, py, rule) {
+              const c2 = raster.ctx; if (!c2) return false;
+              const S = raster.S, K = raster.K;
+              // Clear and set transform so that (px,py) lands at the center pixel
+              c2.setTransform(1,0,0,1,0,0); c2.clearRect(0,0,S,S);
+              const cx = (S-1)/2, cy = (S-1)/2;
+              c2.setTransform(K, 0, 0, K, -px*K + cx, -py*K + cy);
+              c2.fillStyle = '#000';
+              try {
+                if (typeof c2.addPath === 'function') {
+                  c2.beginPath(); c2.addPath(path2d);
+                  if (typeof c2.fill === 'function' && c2.fill.length >= 1) c2.fill(rule || 'nonzero'); else c2.fill();
+                } else if (typeof c2.fill === 'function') {
+                  if (c2.fill.length >= 2) c2.fill(path2d, rule || 'nonzero'); else c2.fill(path2d);
+                } else { return false; }
+              } catch { return false; }
+              const img = c2.getImageData(0,0,S,S).data;
+              for (let i=3; i<img.length; i+=4) { if (img[i] > 0) return true; }
+              return false;
+            }
+            let coloredAny = false;
+            const importedWithColor = imported.filter(imp => imp && imp.color);
+            console.log('Import fill items:', importedWithColor.length);
+            for (const imp of importedWithColor) {
               const path2d = new Path2D(imp.d);
+              const rule = (imp.rule === 'evenodd') ? 'evenodd' : 'nonzero';
+              // Optional: support element transform by mapping the test point into path space
+              let inv = null;
+              try {
+                if (imp.transform && typeof DOMMatrix === 'function') {
+                  inv = new DOMMatrix(String(imp.transform)).inverse();
+                }
+              } catch {}
               for (const r of regions) {
+                if (!r || !Array.isArray(r.points) || r.points.length < 2) continue;
                 const c = centroidOfPoints(r.points);
-                if (ctx.isPointInPath(path2d, c[0], c[1])) {
-                  g.set_region_fill(r.key >>> 0, true);
+                let px = c[0], py = c[1];
+                if (inv && typeof DOMPoint === 'function') {
+                  const p2 = new DOMPoint(c[0], c[1]).matrixTransform(inv);
+                  px = p2.x; py = p2.y;
+                }
+                let inside = false;
+                // 1) Prefer native SVG hit test if available
+                if (!inside && imp.el && typeof imp.el.isPointInFill === 'function') {
+                  try {
+                    const pt = (probe && typeof probe.createSVGPoint === 'function') ? probe.createSVGPoint() : null;
+                    if (pt) { pt.x = px; pt.y = py; inside = !!imp.el.isPointInFill(pt); }
+                  } catch { inside = false; }
+                }
+                // 2) Canvas Path2D hit-test
+                if (!inside) {
+                  try {
+                    if (pathHitWorks) {
+                      if (typeof ctx.isPointInPath === 'function' && ctx.isPointInPath.length >= 4) inside = !!ctx.isPointInPath(path2d, px, py, rule);
+                      else inside = !!ctx.isPointInPath(path2d, px, py);
+                    }
+                  } catch { /* ignore */ }
+                }
+                // 3) Raster fallback
+                if (!inside) inside = rasterHit(path2d, px, py, rule);
+                if (inside) {
                   const [rr,gg,bb,aa] = imp.color;
+                  g.set_region_fill(r.key >>> 0, true);
                   g.set_region_color(r.key >>> 0, rr, gg, bb, aa);
+                  coloredAny = true;
                 }
               }
             }
+            ctx.restore();
+            // Clean up probe DOM
+            try { if (probe && probe.parentNode) probe.parentNode.removeChild(probe); } catch {}
+            console.log('Applied fill colors?', coloredAny);
             // If no fills assigned at all, turn fills off
             let afterColor = g.get_regions();
             let arr = [];
             try { arr = JSON.parse(JSON.stringify(afterColor)); } catch { arr = []; }
-            if (!arr.some(r => r && r.color && r.color.length === 4)) {
+            // Only disable fills when there were no imported fill colors at all; otherwise keep default fallback fill
+            if (importedWithColor.length === 0 && !arr.some(r => r && r.color && r.color.length === 4)) {
               for (const r of arr) { g.set_region_fill(r.key >>> 0, false); }
               afterColor = g.get_regions();
             }
             try { state.regions = JSON.parse(JSON.stringify(afterColor)); } catch { state.regions = []; }
+            try {
+              const stats = { total: state.regions.length, colored: 0, filled: 0 };
+              for (const r of state.regions) {
+                if (!r) continue;
+                if (r.filled) stats.filled++;
+                if (r.color && r.color.length === 4) stats.colored++;
+              }
+              console.log('Region stats:', stats);
+            } catch {}
             state.regionsVersion = g.geom_version();
-            // Enable reference overlay and store strokes
+            // Enable reference overlay and store strokes + fills
             state.svgStrokes = newSvgStrokes;
+            state.svgFills = newSvgFills;
             state.showRef = state.svgStrokes.length > 0;
             fitToView();
             render();
@@ -1191,8 +1328,25 @@
         }
         // Default SVG fill is black if not 'none'
         const opacity = clamp01(parseFloat(fo ?? op ?? '1'));
-        const color = parseCssColor(fill == null || fill === '' ? 'black' : fill, opacity);
+        // SVG default is black when fill unspecified; honor 'none'.
+        const color = parseCssColor(fill == null || String(fill).trim() === '' ? 'black' : fill, opacity);
         return { color };
+      }
+      function resolveFillRule(el) {
+        const readStyle = (node) => {
+          const style = (node.getAttribute && node.getAttribute('style')) || '';
+          const m = (name) => { const r = style.match(new RegExp(`${name}\\s*:\\s*([^;]+)`,'i')); return r ? r[1].trim() : null; };
+          return { rule: m('fill-rule') };
+        };
+        let cur = el; let rule = null;
+        while (cur) {
+          const attr = cur.getAttribute && cur.getAttribute('fill-rule');
+          const st = readStyle(cur);
+          if (rule == null && attr != null) rule = String(attr).toLowerCase();
+          if (rule == null && st.rule != null) rule = String(st.rule).toLowerCase();
+          cur = cur.parentNode;
+        }
+        return (rule === 'evenodd' || rule === 'nonzero') ? rule : 'nonzero';
       }
       function clamp01(v) { if (!isFinite(v)) return 1; if (v < 0) return 0; if (v > 1) return 1; return v; }
       function parseCssColor(value, opacity=1) {
@@ -1242,6 +1396,8 @@
       }
       function centroidOfPoints(pts) {
         // pts: [x0,y0,x1,y1,...]
+        if (!pts || typeof pts.length !== 'number' || pts.length < 2) return [0, 0];
+        if (pts.length < 6) return [pts[0], pts[1]];
         let area = 0, cx = 0, cy = 0;
         for (let i = 0, j = pts.length-2; i < pts.length; j = i, i += 2) {
           const x0 = pts[j], y0 = pts[j+1], x1 = pts[i], y1 = pts[i+1];
@@ -1252,27 +1408,65 @@
       }
 
       function fitToView(padding = 20) {
-        // Compute bbox of all nodes
-        const data = g.get_node_data();
-        const pos = data.positions;
-        if (!pos || pos.length < 2) return;
+        // Compute bbox of full geometry: nodes + cubic handles + polyline points.
+        // This avoids under-estimating curves that bulge beyond endpoints.
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (let i = 0; i < pos.length; i += 2) {
-          const x = pos[i], y = pos[i+1];
-          if (!isFinite(x) || !isFinite(y)) continue;
-          if (x < minX) minX = x; if (y < minY) minY = y;
-          if (x > maxX) maxX = x; if (y > maxY) maxY = y;
-        }
-        if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) return;
+
+        // Nodes
+        try {
+          const data = g.get_node_data();
+          const pos = data && data.positions;
+          if (pos && pos.length >= 2) {
+            for (let i = 0; i < pos.length; i += 2) {
+              const x = pos[i], y = pos[i+1];
+              if (!isFinite(x) || !isFinite(y)) continue;
+              if (x < minX) minX = x; if (y < minY) minY = y;
+              if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+            }
+          }
+        } catch {}
+
+        // Edges: include control points and polyline internal points
+        try {
+          const e = g.get_edge_data();
+          const ids = e && e.ids || [];
+          const ep = e && e.endpoints || [];
+          const kinds = e && e.kinds || [];
+          for (let i = 0; i < ids.length; i++) {
+            const aId = ep[i*2+0];
+            const bId = ep[i*2+1];
+            const a = g.get_node(aId);
+            const b = g.get_node(bId);
+            if (a && b) {
+              const pts = [a[0], a[1], b[0], b[1]];
+              if (kinds[i] === 1) { // cubic: add handles
+                const h = g.get_handles(ids[i]);
+                if (h) pts.push(h[0], h[1], h[2], h[3]);
+              } else if (kinds[i] === 2) { // polyline: add interior points
+                try { const arr = Array.from(g.get_polyline_points(ids[i]) || []); for (let k=0;k+1<arr.length;k+=2) pts.push(arr[k], arr[k+1]); } catch {}
+              }
+              for (let k = 0; k+1 < pts.length; k += 2) {
+                const x = pts[k], y = pts[k+1];
+                if (!isFinite(x) || !isFinite(y)) continue;
+                if (x < minX) minX = x; if (y < minY) minY = y;
+                if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+              }
+            }
+          }
+        } catch {}
+
+        if (!(isFinite(minX) && isFinite(minY) && isFinite(maxX) && isFinite(maxY))) return;
+
         const width = canvas.width / (window.devicePixelRatio || 1);
         const height = canvas.height / (window.devicePixelRatio || 1);
         const boxW = Math.max(1, maxX - minX);
         const boxH = Math.max(1, maxY - minY);
         const sx = (width - 2*padding) / boxW;
         const sy = (height - 2*padding) / boxH;
-        const s = Math.min(sx, sy);
+        const s = Math.max(0.0001, Math.min(sx, sy));
         const tx = padding - minX * s;
         const ty = padding - minY * s;
+
         // Uniformly transform graph to preserve curve shapes and handle offsets
         g.transform_all(s, tx, ty, true);
         state.transform = { s, tx, ty };

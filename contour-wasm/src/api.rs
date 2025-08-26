@@ -50,6 +50,7 @@ impl Graph {
     pub fn pick(&self, x: f32, y: f32, tol: f32) -> JsValue { if let Some(p)=self.inner.pick(x,y,tol) { serde_wasm_bindgen::to_value(&p).unwrap() } else { JsValue::NULL } }
     pub fn to_json(&self) -> JsValue { serde_wasm_bindgen::to_value(&self.inner.to_json_value()).unwrap() }
     pub fn from_json(&mut self, v: JsValue) -> bool { match serde_wasm_bindgen::from_value::<serde_json::Value>(v) { Ok(val)=> self.inner.from_json_value(val), Err(_)=> false } }
+    pub fn clear(&mut self) { self.inner.clear(); }
     pub fn add_svg_path(&mut self, d: &str) -> u32 { self.inner.add_svg_path(d, None) }
     pub fn add_svg_path_with_style(&mut self, d: &str, r: u8, g: u8, b: u8, a: u8, width: f32) -> u32 { self.inner.add_svg_path(d, Some((r,g,b,a,width))) }
     pub fn to_svg_paths(&self) -> JsValue { serde_wasm_bindgen::to_value(&self.inner.to_svg_paths()).unwrap() }

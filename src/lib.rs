@@ -3,6 +3,7 @@ use js_sys::{Float32Array, Object, Uint32Array, Uint8Array, Reflect};
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, HashSet};
 mod algorithms;
+mod api;
 use crate::algorithms::regions::{Region, polygon_centroid};
 mod geometry;
 mod model;
@@ -484,12 +485,7 @@ impl Graph {
 
 // helpers moved into algorithms::regions
 
-/// Optional: better error messages in the browser console
-#[wasm_bindgen]
-pub fn set_panic_hook() {
-    #[cfg(feature = "console_error_panic_hook")]
-    console_error_panic_hook::set_once();
-}
+// set_panic_hook moved to api.rs
 
 // === Cubic API ===
 #[wasm_bindgen]

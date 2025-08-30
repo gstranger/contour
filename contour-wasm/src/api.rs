@@ -155,6 +155,12 @@ impl Graph {
 
     // Styling/handles
     pub fn set_edge_style(&mut self, id: u32, r: u8, g: u8, b: u8, a: u8, width: f32) -> bool { self.inner.set_edge_style(id, r, g, b, a, width) }
+    pub fn set_edge_style_res(&mut self, id: u32, r: u8, g: u8, b: u8, a: u8, width: f32) -> JsValue {
+        if !edge_exists(&self.inner, id) { return error::invalid_id("edge", id); }
+        if !width.is_finite() { return error::non_finite("width"); }
+        if width <= 0.0 { return error::out_of_range("width", 0.0, f32::INFINITY, width); }
+        error::ok(JsValue::from_bool(self.inner.set_edge_style(id, r, g, b, a, width)))
+    }
     pub fn get_edge_style(&self, id: u32) -> JsValue { if let Some((r,g,b,a,w))=self.inner.get_edge_style(id) { serde_wasm_bindgen::to_value(&vec![r as f32,g as f32,b as f32,a as f32,w]).unwrap() } else { JsValue::NULL } }
     pub fn set_edge_cubic(&mut self, id: u32, p1x: f32, p1y: f32, p2x: f32, p2y: f32) -> bool { self.inner.set_edge_cubic(id, p1x, p1y, p2x, p2y) }
     pub fn set_edge_cubic_res(&mut self, id: u32, p1x: f32, p1y: f32, p2x: f32, p2y: f32) -> JsValue {
@@ -197,8 +203,29 @@ impl Graph {
 
     // Transforms and grouping
     pub fn transform_all(&mut self, s: f32, tx: f32, ty: f32, scale_stroke: bool) { self.inner.transform_all(s, tx, ty, scale_stroke) }
+    pub fn transform_all_res(&mut self, s: f32, tx: f32, ty: f32, scale_stroke: bool) -> JsValue {
+        for (n,v) in [("s",s),("tx",tx),("ty",ty)] { if !v.is_finite() { return error::non_finite(n); } }
+        self.inner.transform_all(s, tx, ty, scale_stroke);
+        error::ok(JsValue::from_bool(true))
+    }
     pub fn translate_nodes(&mut self, node_ids: &Uint32Array, dx: f32, dy: f32) -> u32 { let mut v=vec![0u32; node_ids.length() as usize]; node_ids.copy_to(&mut v); self.inner.translate_nodes(&v, dx, dy) }
+    pub fn translate_nodes_res(&mut self, node_ids: &Uint32Array, dx: f32, dy: f32) -> JsValue {
+        if !dx.is_finite() { return error::non_finite("dx"); }
+        if !dy.is_finite() { return error::non_finite("dy"); }
+        let len = node_ids.length() as usize; let mut ids=vec![0u32; len]; node_ids.copy_to(&mut ids);
+        for id in &ids { if self.inner.get_node(*id).is_none() { return error::invalid_id("node", *id); } }
+        let moved = self.inner.translate_nodes(&ids, dx, dy);
+        error::ok(JsValue::from_f64(moved as f64))
+    }
     pub fn translate_edges(&mut self, edge_ids: &Uint32Array, dx: f32, dy: f32, split_shared: bool) -> u32 { let mut v=vec![0u32; edge_ids.length() as usize]; edge_ids.copy_to(&mut v); self.inner.translate_edges(&v, dx, dy, split_shared) }
+    pub fn translate_edges_res(&mut self, edge_ids: &Uint32Array, dx: f32, dy: f32, split_shared: bool) -> JsValue {
+        if !dx.is_finite() { return error::non_finite("dx"); }
+        if !dy.is_finite() { return error::non_finite("dy"); }
+        let len = edge_ids.length() as usize; let mut ids=vec![0u32; len]; edge_ids.copy_to(&mut ids);
+        for id in &ids { if !edge_exists(&self.inner, *id) { return error::invalid_id("edge", *id); } }
+        let moved = self.inner.translate_edges(&ids, dx, dy, split_shared);
+        error::ok(JsValue::from_f64(moved as f64))
+    }
 
     // Polylines
     pub fn add_polyline_edge(&mut self, a: u32, b: u32, points: &Float32Array) -> Option<u32> { let pts=to_pairs(points); self.inner.add_polyline_edge(a,b,&pts) }
@@ -230,12 +257,17 @@ impl Graph {
         let edges = self.inner.add_freehand(&pts, close);
         crate::interop::arr_u32(&edges)
     }
+    pub fn add_freehand_res(&mut self, points: &Float32Array, close: bool) -> JsValue {
+        let len = points.length() as usize; if len%2==1 || len<4 { return error::err("invalid_array", "points must be even length and contain at least 2 points", None); }
+        let mut buf=vec![0.0f32; len]; points.copy_to(&mut buf); if buf.iter().any(|v| !v.is_finite()) { return error::non_finite("points"); }
+        let pts: Vec<(f32,f32)> = buf.chunks(2).map(|c|(c[0],c[1])).collect();
+        let edges = self.inner.add_freehand(&pts, close);
+        error::ok(crate::interop::arr_u32(&edges).into())
+    }
 }
 
 fn to_pairs(arr: &Float32Array) -> Vec<(f32,f32)> { let len=arr.length() as usize; let mut buf=vec![0.0f32; len]; arr.copy_to(&mut buf); let mut out=Vec::with_capacity(len/2); let mut i=0; while i+1<len { out.push((buf[i],buf[i+1])); i+=2; } out }
 fn edge_exists(g: &contour::Graph, id: u32) -> bool { let ea = g.get_edge_arrays(); ea.ids.iter().any(|&x| x==id) }
-trait FloatFinite { fn is_finite(self) -> bool; }
-impl FloatFinite for f32 { fn is_finite(self) -> bool { f32::is_finite(self) } }
 
 fn region_exists(g: &mut contour::Graph, key: u32) -> bool {
     let regs = g.get_regions();

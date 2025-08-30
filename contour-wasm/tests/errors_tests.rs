@@ -1,7 +1,7 @@
 use wasm_bindgen_test::*;
 use contour_wasm::Graph;
 use wasm_bindgen::JsValue;
-use js_sys::{Reflect, Float32Array};
+use js_sys::{Reflect, Float32Array, Uint32Array};
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -53,6 +53,29 @@ fn region_toggle_strict_errors() {
     let mut g = Graph::new();
     // Random key should fail
     let r = g.toggle_region_res(123456);
+    assert!(is_err(&r, "invalid_id"));
+}
+
+#[wasm_bindgen_test]
+fn transforms_and_style_strict_errors() {
+    let mut g = Graph::new();
+    let ver = g.geom_version();
+    // Non-finite transform
+    let r = g.transform_all_res(f32::NAN, 0.0, 0.0, false);
+    assert!(is_err(&r, "non_finite"));
+    assert_eq!(g.geom_version(), ver);
+    // Style with invalid width
+    let a=g.add_node(0.0,0.0); let b=g.add_node(10.0,0.0); let e=g.add_edge(a,b).unwrap();
+    let r2 = g.set_edge_style_res(e, 0,0,0,255, -1.0);
+    assert!(is_err(&r2, "out_of_range"));
+}
+
+#[wasm_bindgen_test]
+fn translate_res_validation() {
+    let mut g = Graph::new();
+    let a=g.add_node(0.0,0.0); let b=g.add_node(10.0,0.0);
+    let ids = Uint32Array::from(&[a, 999_999][..]);
+    let r = g.translate_nodes_res(&ids, 1.0, 2.0);
     assert!(is_err(&r, "invalid_id"));
 }
 

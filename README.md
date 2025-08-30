@@ -56,6 +56,15 @@ wasm-pack test --headless --firefox
 
 You can also run them in a non-headless browser by omitting `--headless`.
 
+### Strict Errors (production)
+
+For production, prefer the strict `*_res` methods which validate inputs and never panic. They return a Result-like object:
+
+- `{ ok: true, value: T }` on success
+- `{ ok: false, error: { code, message, data? } }` on failure
+
+See `docs/errors.md` for error codes and invariants. A minimal TypeScript declaration is provided at `contour-wasm/types.d.ts`.
+
 ## Run the demo
 
 Serve the folder via any static file server (so the browser can fetch the WASM file). For example, from `contour/`:
@@ -89,6 +98,16 @@ Demo controls:
 - `graph.toggle_region(key: number) -> boolean`
 - `graph.set_region_fill(key: number, filled: boolean)`
 - `graph.set_region_color(key: number, r: number, g: number, b: number, a: number)`
+
+Strict variants (examples):
+- `graph.add_node_res(x, y) -> { ok|error }`
+- `graph.move_node_res(id, x, y) -> { ok|error }`
+- `graph.add_edge_res(a, b) -> { ok|error }`
+- `graph.set_handle_pos_res(id, end, x, y) -> { ok|error }`
+- `graph.bend_edge_to_res(id, t, tx, ty, stiffness) -> { ok|error }`
+- `graph.pick_res(x, y, tol) -> { ok: true, value: null | Pick }`
+- `graph.add_svg_path_res(d) -> { ok|error }`
+- Full list in `contour-wasm/types.d.ts`.
 
 ### Freehand (new)
 

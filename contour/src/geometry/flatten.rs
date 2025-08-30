@@ -1,14 +1,16 @@
 use crate::geometry::math::dist_point_to_seg_sq;
+use crate::geometry::tolerance::{MAX_FLATTEN_DEPTH};
 use crate::model::Vec2;
 
 pub fn flatten_cubic(points: &mut Vec<Vec2>,
     x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32,
     tol: f32, depth: u32)
 {
+    if depth > MAX_FLATTEN_DEPTH { points.push(Vec2 { x: x3, y: y3 }); return; }
     let d1 = dist_point_to_seg_sq(x1, y1, x0, y0, x3, y3);
     let d2 = dist_point_to_seg_sq(x2, y2, x0, y0, x3, y3);
     let tol2 = tol * tol;
-    if d1.max(d2) <= tol2 || depth > 16 {
+    if d1.max(d2) <= tol2 {
         points.push(Vec2 { x: x3, y: y3 });
         return;
     }
@@ -21,4 +23,3 @@ pub fn flatten_cubic(points: &mut Vec<Vec2>,
     flatten_cubic(points, x0, y0, x01, y01, x012, y012, x0123, y0123, tol, depth+1);
     flatten_cubic(points, x0123, y0123, x123, y123, x23, y23, x3, y3, tol, depth+1);
 }
-

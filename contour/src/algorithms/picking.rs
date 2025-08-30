@@ -1,5 +1,6 @@
 use crate::{Graph, model::EdgeKind};
 use crate::geometry::math::{seg_distance_sq, cubic_distance_sq};
+use crate::geometry::tolerance::clamp01;
 
 pub fn pick_impl(g: &Graph, x: f32, y: f32, tol: f32) -> Option<crate::Pick> {
     let tol2 = tol*tol;
@@ -31,7 +32,7 @@ pub fn pick_impl(g: &Graph, x: f32, y: f32, tol: f32) -> Option<crate::Pick> {
             EdgeKind::Cubic{ha,hb,..} => {
                 let a=g.nodes[e.a as usize].unwrap(); let b=g.nodes[e.b as usize].unwrap();
                 let p1x=a.x+ha.x; let p1y=a.y+ha.y; let p2x=b.x+hb.x; let p2y=b.y+hb.y;
-                let (d2,t)=cubic_distance_sq(x,y,a.x,a.y,p1x,p1y,p2x,p2y,b.x,b.y); if d2<=tol2 { if best_edge.map_or(true, |(_,bd,_)| d2<bd) { best_edge=Some((i as u32, d2, t)); } }
+                let (d2,t)=cubic_distance_sq(x,y,a.x,a.y,p1x,p1y,p2x,p2y,b.x,b.y); if d2<=tol2 { if best_edge.map_or(true, |(_,bd,_)| d2<bd) { best_edge=Some((i as u32, d2, clamp01(t))); } }
             }
             EdgeKind::Polyline{ ref points } => {
                 let a=g.nodes[e.a as usize].unwrap(); let b=g.nodes[e.b as usize].unwrap();

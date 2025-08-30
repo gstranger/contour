@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 use crate::{Graph, model::{Vec2, EdgeKind, FillState}};
 use crate::geometry::flatten::flatten_cubic;
+use crate::geometry::tolerance::{QUANT_SCALE, EPS_FACE_AREA, EPS_ANG};
 
 #[derive(Clone)]
 pub(crate) struct Region { pub key: u32, pub points: Vec<Vec2>, pub area: f32 }
@@ -22,13 +23,13 @@ impl Graph {
                 EdgeKind::Polyline{ ref points } => { let mut prev=Pt{x:a.x,y:a.y}; for p in points { let next=Pt{x:p.x,y:p.y}; segs.push((prev,next,eid as u32)); prev=next; } segs.push((prev, Pt{x:b.x,y:b.y}, eid as u32)); },
             }}
         }
-        let scale=10.0; let mut vid_map:HashMap<(i32,i32),usize>=HashMap::new(); let mut verts:Vec<Pt>=Vec::new(); let mut half_from=Vec::new(); let mut half_to=Vec::new(); let mut half_eid=Vec::new();
+        let scale=QUANT_SCALE; let mut vid_map:HashMap<(i32,i32),usize>=HashMap::new(); let mut verts:Vec<Pt>=Vec::new(); let mut half_from=Vec::new(); let mut half_to=Vec::new(); let mut half_eid=Vec::new();
         for (p,q,eid) in segs { let qx=|v:f32|(v*scale).round() as i32; let k1=(qx(p.x),qx(p.y)); let k2=(qx(q.x),qx(q.y)); let u=*vid_map.entry(k1).or_insert_with(||{let id=verts.len(); verts.push(p); id}); let v=*vid_map.entry(k2).or_insert_with(||{let id=verts.len(); verts.push(q); id}); if u==v { continue; } half_from.push(u); half_to.push(v); half_eid.push(eid); half_from.push(v); half_to.push(u); half_eid.push(eid); }
         let m=half_from.len(); let mut adj:Vec<Vec<(usize,f32)>>=vec![Vec::new(); verts.len()]; for i in 0..m { let u=half_from[i]; let v=half_to[i]; let a=(verts[v].y-verts[u].y).atan2(verts[v].x-verts[u].x); adj[u].push((v,a)); } for lst in &mut adj { lst.sort_by(|x,y| x.1.partial_cmp(&y.1).unwrap()); }
         let mut idx_map:HashMap<(usize,usize),Vec<usize>>=HashMap::new(); for i in 0..m { idx_map.entry((half_from[i], half_to[i])).or_default().push(i); }
         let mut used=vec![false;m]; let mut regions=Vec::new();
-        for i_start in 0..m { if used[i_start] { continue; } let mut i_he=i_start; let mut cycle:Vec<usize>=Vec::new(); let mut cycle_eids=Vec::new(); let mut guard=0; loop { used[i_he]=true; let v=half_to[i_he]; let u=half_from[i_he]; cycle.push(u); cycle_eids.push(half_eid[i_he]); let lst=&adj[v]; if lst.is_empty() { break; } let mut rev_idx=None; if let Some(cands)=idx_map.get(&(v,u)) { for &c in cands { if half_from[c]==v && half_to[c]==u { rev_idx=Some(c); break; } } } let _rev_i = if let Some(ix)=rev_idx { ix } else { break }; let ang=(verts[u].y-verts[v].y).atan2(verts[u].x-verts[v].x); let mut k=0usize; while k<lst.len() && (lst[k].1-ang).abs()>f32::EPSILON { k+=1; } if k==0 { k=lst.len(); } let (w,_)=lst[k-1]; if let Some(list)=idx_map.get(&(v,w)) { let mut found=None; for &cand in list { if !used[cand] { found=Some(cand); break; } } if let Some(nhe)=found { i_he=nhe; } else { break; } } else { break; } guard+=1; if guard>100000 { break; } if i_he==i_start { break; } }
-            if cycle.len()>=3 { let mut poly=Vec::new(); for &idx in &cycle { poly.push(Vec2{x:verts[idx].x, y:verts[idx].y}); } let area=polygon_area(&poly); if area.abs() < 1e-2 { continue; } let mut seq=Vec::new(); for &e in &cycle_eids { if seq.last().copied()!=Some(e) { seq.push(e);} } if seq.len()>=2 && seq.first()==seq.last() { seq.pop(); } let key=region_key_from_edges(&seq); regions.push(Region{ key, points: poly, area }); }
+        for i_start in 0..m { if used[i_start] { continue; } let mut i_he=i_start; let mut cycle:Vec<usize>=Vec::new(); let mut cycle_eids=Vec::new(); let mut guard=0; loop { used[i_he]=true; let v=half_to[i_he]; let u=half_from[i_he]; cycle.push(u); cycle_eids.push(half_eid[i_he]); let lst=&adj[v]; if lst.is_empty() { break; } let mut rev_idx=None; if let Some(cands)=idx_map.get(&(v,u)) { for &c in cands { if half_from[c]==v && half_to[c]==u { rev_idx=Some(c); break; } } } let _rev_i = if let Some(ix)=rev_idx { ix } else { break }; let ang=(verts[u].y-verts[v].y).atan2(verts[u].x-verts[v].x); let mut idx=0usize; while idx<lst.len() && lst[idx].1 <= ang + EPS_ANG { idx+=1; } let prev = if idx==0 { lst.len()-1 } else { idx-1 }; let (w,_)=lst[prev]; if let Some(list)=idx_map.get(&(v,w)) { let mut found=None; for &cand in list { if !used[cand] { found=Some(cand); break; } } if let Some(nhe)=found { i_he=nhe; } else { break; } } else { break; } guard+=1; if guard>100000 { break; } if i_he==i_start { break; } }
+            if cycle.len()>=3 { let mut poly=Vec::new(); for &idx in &cycle { poly.push(Vec2{x:verts[idx].x, y:verts[idx].y}); } let area=polygon_area(&poly); if area.abs() < EPS_FACE_AREA { continue; } let mut seq=Vec::new(); for &e in &cycle_eids { if seq.last().copied()!=Some(e) { seq.push(e);} } if seq.len()>=2 && seq.first()==seq.last() { seq.pop(); } let key=region_key_from_edges(&seq); regions.push(Region{ key, points: poly, area }); }
         }
         if regions.is_empty() { regions = self.find_simple_cycles(); }
         regions
@@ -43,7 +44,7 @@ impl Graph {
             if cycle_ids.len()>=3 && cur==start { let mut poly=Vec::new(); let mut edge_seq=Vec::new(); for i in 0..cycle_ids.len() { let u=cycle_ids[i]; let v=cycle_ids[(i+1)%cycle_ids.len()]; let nu=self.nodes[u as usize].unwrap(); let nv=self.nodes[v as usize].unwrap(); let mut added=false; for (eid_idx,e) in self.edges.iter().enumerate() { if let Some(e)=e { if (e.a==u && e.b==v) || (e.a==v && e.b==u) { match &e.kind { EdgeKind::Line => { if poly.is_empty(){ poly.push(Vec2{x:nu.x,y:nu.y}); } poly.push(Vec2{x:nv.x,y:nv.y}); }, EdgeKind::Cubic{ha,hb,..} => { let (ax,ay,bx,by,p1x,p1y,p2x,p2y)= if e.a==u { (nu.x,nu.y,nv.x,nv.y,nu.x+ha.x,nu.y+ha.y,nv.x+hb.x,nv.y+hb.y) } else { (nv.x,nv.y,nu.x,nu.y,nv.x+hb.x,nv.y+hb.y,nu.x+ha.x,nu.y+ha.y) }; if poly.is_empty(){ poly.push(Vec2{x:ax,y:ay}); } let mut pts=Vec::new(); flatten_cubic(&mut pts,ax,ay,p1x,p1y,p2x,p2y,bx,by,self.flatten_tol,0); for w in pts.into_iter().skip(1) { poly.push(w); } }, EdgeKind::Polyline{ points } => { if poly.is_empty(){ poly.push(Vec2{x:nu.x,y:nu.y}); } for p in points { poly.push(*p); } poly.push(Vec2{x:nv.x,y:nv.y}); } } edge_seq.push(eid_idx as u32); added=true; break; } } }
                 if !added { poly.clear(); break; }
             }
-            if poly.len()>=3 { let area=polygon_area(&poly); if area.abs()>=1e-2 { let key=region_key_from_edges(&edge_seq); regions.push(Region{ key, points: poly, area }); } }
+            if poly.len()>=3 { let area=polygon_area(&poly); if area.abs()>=EPS_FACE_AREA { let key=region_key_from_edges(&edge_seq); regions.push(Region{ key, points: poly, area }); } }
         }}
         regions
     }
@@ -65,4 +66,3 @@ pub fn get_regions_with_fill(g: &mut Graph) -> Vec<serde_json::Value> {
         serde_json::to_value(RegionSer{ key:r.key, area:r.area, filled:st.filled, color, points:pts }).unwrap()
     }).collect()
 }
-

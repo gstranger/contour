@@ -1,4 +1,4 @@
-use crate::{Graph, model::{Vec2, EdgeKind}};
+use crate::{Graph, model::EdgeKind};
 use std::collections::HashMap;
 
 pub fn to_svg_paths_impl(g: &Graph) -> Vec<String> {
@@ -28,4 +28,3 @@ pub fn add_svg_path_impl(g: &mut Graph, d: &str, rgba: Option<(u8,u8,u8,u8,f32)>
     if edges_added>0 { /* bump handled by add_edge */ }
     edges_added
 }
-

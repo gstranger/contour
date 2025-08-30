@@ -1,5 +1,5 @@
 pub mod model;
-pub mod geometry { pub mod math; pub mod flatten; }
+pub mod geometry { pub mod math; pub mod flatten; pub mod tolerance; }
 pub mod algorithms { pub mod picking; pub mod regions; }
 mod json;
 mod svg;
@@ -29,6 +29,48 @@ pub enum Pick {
 }
 
 impl Graph {
+    // Enforce handle constraints after edits. If changed_end is Some(0|1), we
+    // preserve that end's length for Aligned, and mirror the other to equal length for Mirrored.
+    fn enforce_handle_constraints(ha: Vec2, hb: Vec2, mode: HandleMode, changed_end: Option<u8>) -> (Vec2, Vec2) {
+        use geometry::tolerance::EPS_LEN;
+        match mode {
+            HandleMode::Free => (ha, hb),
+            HandleMode::Mirrored => {
+                // Opposite directions; equal lengths.
+                let la = (ha.x*ha.x + ha.y*ha.y).sqrt();
+                let lb = (hb.x*hb.x + hb.y*hb.y).sqrt();
+                if la <= EPS_LEN && lb <= EPS_LEN { return (Vec2{x:0.0,y:0.0}, Vec2{x:0.0,y:0.0}); }
+                // Choose target length. If a specific end changed, use its length; else average.
+                let target_len = match changed_end { Some(0) => la, Some(1) => lb, _ => 0.5*(la.max(0.0)+lb.max(0.0)) };
+                // Direction from ha defines both (hb opposite).
+                let (ux,uy) = if la > EPS_LEN { (ha.x/la, ha.y/la) } else if lb > EPS_LEN { (-hb.x/lb, -hb.y/lb) } else { (0.0,0.0) };
+                let nha = Vec2 { x: ux * target_len, y: uy * target_len };
+                let nhb = Vec2 { x: -ux * target_len, y: -uy * target_len };
+                (nha, nhb)
+            }
+            HandleMode::Aligned => {
+                // Opposite directions; preserve opposite length for the changed end if provided.
+                let la = (ha.x*ha.x + ha.y*ha.y).sqrt();
+                let lb = (hb.x*hb.x + hb.y*hb.y).sqrt();
+                // Direction from ha if available, else opposite of hb.
+                let (ux,uy, ref_len_b) = if changed_end == Some(0) {
+                    let (ux,uy) = if la>EPS_LEN { (ha.x/la, ha.y/la) } else { (0.0,0.0) };
+                    (ux,uy, lb)
+                } else if changed_end == Some(1) {
+                    // Use hb direction to infer ha; preserve ha length
+                    let (vx,vy) = if lb>EPS_LEN { (hb.x/lb, hb.y/lb) } else { (0.0,0.0) };
+                    (-vx,-vy, la)
+                } else {
+                    // Both changed: align by ha's direction and preserve hb length.
+                    let (ux,uy) = if la>EPS_LEN { (ha.x/la, ha.y/la) } else if lb>EPS_LEN { (-hb.x/lb, -hb.y/lb) } else { (0.0,0.0) };
+                    (ux,uy, lb)
+                };
+                let nha = if la>EPS_LEN { Vec2 { x: ux*la, y: uy*la } } else { ha };
+                let nhb = if ref_len_b>EPS_LEN { Vec2 { x: -ux*ref_len_b, y: -uy*ref_len_b } } else { Vec2{x:0.0,y:0.0} };
+                (nha, nhb)
+            }
+        }
+    }
     pub fn new() -> Self {
         Graph { nodes: Vec::new(), edges: Vec::new(), fills: HashMap::new(), geom_ver: 1, last_geom_ver: 0, prev_regions: Vec::new(), flatten_tol: 0.25 }
     }
@@ -124,35 +166,35 @@ impl Graph {
         if let Some(Some(e)) = self.edges.get(id as usize) { if let Some(c)=e.stroke { return Some((c.r,c.g,c.b,c.a,e.stroke_width)); } }
         None
     }
-    pub fn set_edge_cubic(&mut self, id: u32, p1x: f32, p1y: f32, p2x: f32, p2y: f32) -> bool {
-        if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
-            let a = self.nodes[edge.a as usize].unwrap();
-            let b = self.nodes[edge.b as usize].unwrap();
-            let ha = Vec2 { x: p1x - a.x, y: p1y - a.y };
-            let hb = Vec2 { x: p2x - b.x, y: p2y - b.y };
-            edge.kind = EdgeKind::Cubic { ha, hb, mode: HandleMode::Free };
-            self.bump(); return true;
-        }
-        false
-    }
+    // set_edge_cubic defined below with guards
     pub fn set_edge_line(&mut self, id: u32) -> bool {
         if let Some(Some(edge)) = self.edges.get_mut(id as usize) { edge.kind = EdgeKind::Line; self.bump(); return true; }
         false
     }
     pub fn get_handles(&self, id: u32) -> Option<[f32;4]> {
         if let Some(Some(e)) = self.edges.get(id as usize) {
-            let a = self.nodes[e.a as usize]?; let b = self.nodes[e.b as usize]?;
+            let a = match self.nodes.get(e.a as usize).and_then(|n| *n) { Some(n)=>n, None=>return None };
+            let b = match self.nodes.get(e.b as usize).and_then(|n| *n) { Some(n)=>n, None=>return None };
             if let EdgeKind::Cubic { ha, hb, .. } = e.kind { return Some([a.x+ha.x, a.y+ha.y, b.x+hb.x, b.y+hb.y]); }
+        }
+        None
+    }
+    pub fn get_handle_mode(&self, id: u32) -> Option<u8> {
+        if let Some(Some(e)) = self.edges.get(id as usize) {
+            if let EdgeKind::Cubic { mode, .. } = e.kind {
+                return Some(match mode { HandleMode::Free=>0, HandleMode::Mirrored=>1, HandleMode::Aligned=>2 });
+            }
         }
         None
     }
     pub fn set_handle_pos(&mut self, id: u32, end: u8, x: f32, y: f32) -> bool {
         if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
             let (mut ha, mut hb, mode) = match edge.kind { EdgeKind::Cubic { ha, hb, mode } => (ha,hb,mode), _ => return false };
-            let a = self.nodes[edge.a as usize].unwrap();
-            let b = self.nodes[edge.b as usize].unwrap();
-            if end==0 { ha = Vec2 { x: x-a.x, y: y-a.y }; match mode { HandleMode::Free=>{}, HandleMode::Mirrored=>{ hb = Vec2{x:-ha.x,y:-ha.y}; }, HandleMode::Aligned=>{ let len=(hb.x*hb.x+hb.y*hb.y).sqrt(); let mut vx=-ha.x; let mut vy=-ha.y; let vlen=(vx*vx+vy*vy).sqrt(); if vlen>0.0 {vx/=vlen; vy/=vlen;} hb=Vec2{x:vx*len,y:vy*len}; } } }
-            else { hb = Vec2 { x: x-b.x, y: y-b.y }; match mode { HandleMode::Free=>{}, HandleMode::Mirrored=>{ ha = Vec2{x:-hb.x,y:-hb.y}; }, HandleMode::Aligned=>{ let len=(ha.x*ha.x+ha.y*ha.y).sqrt(); let mut vx=-hb.x; let mut vy=-hb.y; let vlen=(vx*vx+vy*vy).sqrt(); if vlen>0.0 {vx/=vlen; vy/=vlen;} ha=Vec2{x:vx*len,y:vy*len}; } } }
+            let a = match self.nodes.get(edge.a as usize).and_then(|n| *n) { Some(n)=>n, None=>return false };
+            let b = match self.nodes.get(edge.b as usize).and_then(|n| *n) { Some(n)=>n, None=>return false };
+            if end==0 { ha = Vec2 { x: x-a.x, y: y-a.y }; }
+            else { hb = Vec2 { x: x-b.x, y: y-b.y }; }
+            let (ha, hb) = Self::enforce_handle_constraints(ha, hb, mode, Some(end));
             edge.kind = EdgeKind::Cubic { ha, hb, mode };
             self.bump(); return true;
         }
@@ -160,9 +202,28 @@ impl Graph {
     }
     pub fn set_handle_mode(&mut self, id: u32, mode: u8) -> bool {
         if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
-            let (ha, hb) = match edge.kind { EdgeKind::Cubic { ha, hb, .. } => (ha,hb), _ => return false };
+            let (ha, hb, _) = match edge.kind { EdgeKind::Cubic { ha, hb, mode } => (ha,hb,mode), _ => return false };
             let m = match mode {1=>HandleMode::Mirrored,2=>HandleMode::Aligned,_=>HandleMode::Free};
+            let (ha, hb) = Self::enforce_handle_constraints(ha, hb, m, None);
             edge.kind = EdgeKind::Cubic { ha, hb, mode: m }; self.bump(); return true;
+        }
+        false
+    }
+    pub fn set_edge_cubic(&mut self, id: u32, p1x: f32, p1y: f32, p2x: f32, p2y: f32) -> bool {
+        if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
+            let a = match self.nodes.get(edge.a as usize).and_then(|n| *n) { Some(n)=>n, None=>return false };
+            let b = match self.nodes.get(edge.b as usize).and_then(|n| *n) { Some(n)=>n, None=>return false };
+            let ha = Vec2 { x: p1x - a.x, y: p1y - a.y };
+            let hb = Vec2 { x: p2x - b.x, y: p2y - b.y };
+            // If both handles collapse to anchors, keep as line (no-op cubic)
+            let ha_l = (ha.x*ha.x + ha.y*ha.y).sqrt();
+            let hb_l = (hb.x*hb.x + hb.y*hb.y).sqrt();
+            if ha_l <= geometry::tolerance::EPS_LEN && hb_l <= geometry::tolerance::EPS_LEN {
+                edge.kind = EdgeKind::Line;
+            } else {
+                edge.kind = EdgeKind::Cubic { ha, hb, mode: HandleMode::Free };
+            }
+            self.bump(); return true;
         }
         false
     }
@@ -170,22 +231,33 @@ impl Graph {
         if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
             let a = self.nodes[edge.a as usize].unwrap();
             let b = self.nodes[edge.b as usize].unwrap();
+            let t = geometry::tolerance::clamp01(t);
             let (mut ha, mut hb, mode) = match edge.kind {
                 EdgeKind::Cubic{ha,hb,mode} => (ha,hb,mode),
                 EdgeKind::Line => {
-                    let dx=b.x-a.x; let dy=b.y-a.y; let len=(dx*dx+dy*dy).sqrt().max(1.0); let k=0.3*len;
-                    (Vec2{x:a.x+(dx/len)*k-a.x, y:a.y+(dy/len)*k-a.y}, Vec2{x:b.x-(dx/len)*k-b.x, y:b.y-(dy/len)*k-b.y}, HandleMode::Free)
+                    // Convert to a simple cubic aligned with the segment unless degenerate.
+                    let dx=b.x-a.x; let dy=b.y-a.y; let len=(dx*dx+dy*dy).sqrt();
+                    if len < geometry::tolerance::EPS_LEN { return true; } // no-op on zero-length
+                    let k=0.3*len; let ux=dx/len; let uy=dy/len;
+                    (Vec2{x:ux*k, y:uy*k}, Vec2{x:-ux*k, y:-uy*k}, HandleMode::Free)
                 }
                 EdgeKind::Polyline{..} => return false,
             };
             let p1x=a.x+ha.x; let p1y=a.y+ha.y; let p2x=b.x+hb.x; let p2y=b.y+hb.y;
             let (cx,cy)=geometry::math::cubic_point(t,a.x,a.y,p1x,p1y,p2x,p2y,b.x,b.y);
             let dx=tx-cx; let dy=ty-cy; let c1=3.0*(1.0-t).powi(2)*t; let c2=3.0*(1.0-t)*t.powi(2);
-            let l1=1.0; let l2=stiffness.max(0.0001); let denom=c1*c1/l1 + c2*c2/l2; if denom<=0.0 { return false; }
+            let l1=1.0; let l2=stiffness.max(geometry::tolerance::EPS_LEN);
+            let denom=c1*c1/l1 + c2*c2/l2;
+            if denom <= geometry::tolerance::EPS_DENOM {
+                // Treat as no-op to avoid instability
+                return true;
+            }
             let ax=dx/denom; let ay=dy/denom; let d1x=(c1/l1)*ax; let d1y=(c1/l1)*ay; let d2x=(c2/l2)*ax; let d2y=(c2/l2)*ay;
-            match mode { HandleMode::Free => { ha.x+=d1x; ha.y+=d1y; hb.x+=d2x; hb.y+=d2y; }
-                HandleMode::Mirrored => { let mhx=ha.x-d1x; let mhy=ha.y-d1y; let len=(mhx*mhx+mhy*mhy).sqrt(); if len>0.0 { let vx=-mhx/len; let vy=-mhy/len; let tlen=((hb.x+d2x).powi(2)+(hb.y+d2y).powi(2)).sqrt(); hb.x=vx*tlen; hb.y=vy*tlen; } ha.x+=d1x; ha.y+=d1y; }
-                HandleMode::Aligned => { ha.x+=d1x; ha.y+=d1y; let len=(hb.x*hb.x+hb.y*hb.y).sqrt(); let mut vx=-ha.x; let mut vy=-ha.y; let vlen=(vx*vx+vy*vy).sqrt(); if vlen>0.0 {vx/=vlen; vy/=vlen;} hb.x=vx*len; hb.y=vy*len; } }
+            // Apply LS update then enforce constraints
+            ha.x+=d1x; ha.y+=d1y; hb.x+=d2x; hb.y+=d2y;
+            let changed = if t <= 0.5 { Some(0) } else { Some(1) };
+            let (ha, hb) = Self::enforce_handle_constraints(ha, hb, mode, changed);
+            // Commit cubic kind (including line->cubic conversion)
             edge.kind=EdgeKind::Cubic{ha,hb,mode}; self.bump(); return true;
         }
         false

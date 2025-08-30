@@ -191,6 +191,171 @@ impl Graph {
         false
     }
 
+    // Freehand fitting: convert a sampled polyline into a chain of cubic edges
+    pub fn add_freehand(&mut self, points: &[(f32,f32)], close: bool) -> Vec<u32> {
+        fn rdp(points: &[(f32,f32)], eps: f32) -> Vec<(f32,f32)> {
+            if points.len() <= 2 { return points.to_vec(); }
+            let eps2 = eps*eps;
+            fn perp_dist2(p: (f32,f32), a:(f32,f32), b:(f32,f32)) -> f32 {
+                let (px,py) = p; let (x1,y1)=a; let (x2,y2)=b;
+                let vx=x2-x1; let vy=y2-y1; let wx=px-x1; let wy=py-y1;
+                let vv = vx*vx+vy*vy; if vv==0.0 { return wx*wx+wy*wy; }
+                let t = (wx*vx+wy*vy)/vv; let t = if t<0.0 {0.0} else if t>1.0 {1.0} else {t};
+                let sx = x1 + t*vx; let sy = y1 + t*vy; let dx=px-sx; let dy=py-sy; dx*dx+dy*dy
+            }
+            fn rec(slice:&[(f32,f32)], eps2:f32, out:&mut Vec<(f32,f32)>) {
+                let n=slice.len(); if n<=2 { out.push(slice[0]); return; }
+                let a=slice[0]; let b=slice[n-1];
+                let mut idx=0usize; let mut md2=0.0f32;
+                for i in 1..(n-1) { let d2=perp_dist2(slice[i], a, b); if d2>md2 { md2=d2; idx=i; } }
+                if md2>eps2 { rec(&slice[..=idx], eps2, out); rec(&slice[idx..], eps2, out); }
+                else { out.push(a); }
+            }
+            let mut out=Vec::new(); rec(points, eps2, &mut out); out.push(*points.last().unwrap()); out
+        }
+
+        fn angle_between(a:(f32,f32), b:(f32,f32)) -> f32 {
+            let (ax,ay)=a; let (bx,by)=b; let da=(ax*ax+ay*ay).sqrt(); let db=(bx*bx+by*by).sqrt();
+            if da==0.0 || db==0.0 { return 0.0; }
+            let mut c = (ax*bx+ay*by)/(da*db); if c>1.0 { c=1.0; } else if c < -1.0 { c=-1.0; }
+            c.acos().to_degrees()
+        }
+
+        fn resample_even(points: &[(f32,f32)], step: f32, close: bool) -> Vec<(f32,f32)> {
+            let n = points.len();
+            if n == 0 { return Vec::new(); }
+            if n == 1 { return points.to_vec(); }
+            let mut out: Vec<(f32,f32)> = Vec::new();
+            let mut prev = points[0];
+            out.push(prev);
+            let mut carry = step;
+            let mut seg_iter = 0usize;
+            let total_segs = if close { n } else { n-1 };
+            let mut i = 0usize;
+            while seg_iter < total_segs {
+                let j = if i+1 < n { i+1 } else { 0 };
+                let (x1,y1) = prev;
+                let (x2,y2) = points[j];
+                let dx = x2 - prev.0; let dy = y2 - prev.1; // from prev to segment end
+                let seg_len = (dx*dx + dy*dy).sqrt();
+                if seg_len >= carry && carry > 0.0 {
+                    let t = carry / seg_len;
+                    let nx = x1 + t * (x2 - x1);
+                    let ny = y1 + t * (y2 - y1);
+                    out.push((nx, ny));
+                    prev = (nx, ny);
+                    // stay on same segment with reduced remaining length
+                    carry = step;
+                    continue;
+                } else {
+                    // move to next segment
+                    carry -= seg_len;
+                    prev = points[j];
+                    i = j;
+                    seg_iter += 1;
+                }
+            }
+            if !close { if *out.last().unwrap() != *points.last().unwrap() { out.push(*points.last().unwrap()); } }
+            out
+        }
+
+        let mut pts: Vec<(f32,f32)> = points.iter().copied().collect();
+        // Basic guard and sampling sanity
+        pts.dedup_by(|a,b| (a.0-b.0).abs()<1e-6 && (a.1-b.1).abs()<1e-6);
+        if pts.len()<2 { return Vec::new(); }
+        // Simplify then resample to even spacing (~24 px)
+        // Strong simplify first
+        let rough = if pts.len()>4 { rdp(&pts, 4.0) } else { pts.clone() };
+        // Target a small fixed number of anchors across the whole stroke
+        let mut total_len = 0.0f32;
+        for i in 0..(rough.len().saturating_sub(1)) {
+            let (x1,y1)=rough[i]; let (x2,y2)=rough[i+1];
+            total_len += ((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1)).sqrt();
+        }
+        if close && rough.len()>=2 { let (x1,y1)=rough[rough.len()-1]; let (x2,y2)=rough[0]; total_len += ((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1)).sqrt(); }
+        let target_anchors = if close { 8usize } else { 6usize }; // very sparse by default
+        let step = if close {
+            if target_anchors>0 { (total_len / (target_anchors as f32)).max(40.0) } else { total_len.max(40.0) }
+        } else {
+            if target_anchors>1 { (total_len / ((target_anchors-1) as f32)).max(40.0) } else { total_len.max(40.0) }
+        };
+        let mut simp = resample_even(&rough, step, close);
+        // Uniformly downsample to hard cap desired anchors
+        let desired = target_anchors.max( if close { 3 } else { 2 } );
+        if !close {
+            if simp.len() > desired {
+                let mut reduced: Vec<(f32,f32)> = Vec::with_capacity(desired);
+                for k in 0..desired {
+                    let idx = if desired>1 { ((k as f32) * ((simp.len()-1) as f32) / ((desired-1) as f32)).round() as usize } else { 0 };
+                    reduced.push(simp[idx.min(simp.len()-1)]);
+                }
+                simp = reduced;
+            }
+        } else {
+            if simp.len() > desired {
+                let mut reduced: Vec<(f32,f32)> = Vec::with_capacity(desired);
+                for k in 0..desired {
+                    let idx = ((k as f32) * ((simp.len()) as f32) / (desired as f32)).round() as usize % simp.len();
+                    reduced.push(simp[idx]);
+                }
+                simp = reduced;
+            }
+        }
+        let n = simp.len(); if n<2 { return Vec::new(); }
+
+        // Create nodes
+        let mut node_ids: Vec<u32> = Vec::with_capacity(n);
+        for &(x,y) in &simp { node_ids.push(self.add_node(x,y)); }
+
+        // Segment-wise Catmull–Rom fit with clamping and cusp detection
+        let cusp_deg = 160.0f32; // be more conservative about creating corners
+        let clamp_factor = 0.8f32; // allow longer handles for smoother shapes
+        let mut created_edges: Vec<u32> = Vec::new();
+        let seg_count = if close { n } else { n-1 };
+        for i in 0..seg_count {
+            let i0 = i % n;
+            let i1 = (i+1)%n;
+            let im1 = if i0>0 { i0-1 } else { if close { n-1 } else { i0 } };
+            let ip2 = if i1+1<n { i1+1 } else { if close { (i1+1)%n } else { i1 } };
+            let p0 = simp[im1];
+            let p1 = simp[i0];
+            let p2 = simp[i1];
+            let p3 = simp[ip2];
+            // Catmull–Rom tangents
+            let t1x = 0.5*(p2.0 - p0.0); let t1y = 0.5*(p2.1 - p0.1);
+            let t2x = 0.5*(p3.0 - p1.0); let t2y = 0.5*(p3.1 - p1.1);
+            // Initial controls
+            let mut c1x = p1.0 + t1x/3.0; let mut c1y = p1.1 + t1y/3.0;
+            let mut c2x = p2.0 - t2x/3.0; let mut c2y = p2.1 - t2y/3.0;
+            // Cusp detection at p1 and p2
+            let v_in = (p1.0 - p0.0, p1.1 - p0.1);
+            let v_out = (p2.0 - p1.0, p2.1 - p1.1);
+            if angle_between(v_in, v_out) >= cusp_deg { c1x=p1.0; c1y=p1.1; }
+            let v_in2 = (p2.0 - p1.0, p2.1 - p1.1);
+            let v_out2 = (p3.0 - p2.0, p3.1 - p2.1);
+            if angle_between(v_in2, v_out2) >= cusp_deg { c2x=p2.0; c2y=p2.1; }
+            // Clamp to segment length
+            let seg_len = ((p2.0-p1.0)*(p2.0-p1.0)+(p2.1-p1.1)*(p2.1-p1.1)).sqrt();
+            let max_len = clamp_factor * seg_len;
+            let mut hx = c1x - p1.0; let mut hy = c1y - p1.1; let hl=(hx*hx+hy*hy).sqrt();
+            if hl>max_len && hl>0.0 { hx*=max_len/hl; hy*=max_len/hl; c1x=p1.0+hx; c1y=p1.1+hy; }
+            let mut kx = c2x - p2.0; let mut ky = c2y - p2.1; let kl=(kx*kx+ky*ky).sqrt();
+            if kl>max_len && kl>0.0 { kx*=max_len/kl; ky*=max_len/kl; c2x=p2.0+kx; c2y=p2.1+ky; }
+            // Create edge
+            if let Some(eid) = self.add_edge(node_ids[i0], node_ids[i1]) {
+                // Set cubic with mirrored handles for smoothness
+                if let Some(Some(edge)) = self.edges.get_mut(eid as usize) {
+                    let ha = Vec2 { x: c1x - p1.0, y: c1y - p1.1 };
+                    let hb = Vec2 { x: c2x - p2.0, y: c2y - p2.1 };
+                    edge.kind = EdgeKind::Cubic { ha, hb, mode: HandleMode::Mirrored };
+                    self.bump();
+                }
+                created_edges.push(eid);
+            }
+        }
+        created_edges
+    }
+
     // Regions & fills
     pub fn set_flatten_tolerance(&mut self, tol: f32) { self.flatten_tol = tol.max(0.01).min(10.0); }
     pub fn get_regions(&mut self) -> Vec<serde_json::Value> { algorithms::regions::get_regions_with_fill(self) }

@@ -1,0 +1,23 @@
+[
+  {"name":"v1","color":"0366d6","description":"V1 milestone work"},
+
+  {"name":"area:core","color":"1f6feb","description":"Core model, geometry, regions"},
+  {"name":"area:perf","color":"e99695","description":"Performance and memory"},
+  {"name":"area:wasm","color":"c5def5","description":"WASM interface and interop"},
+  {"name":"area:rendering","color":"fbca04","description":"Rendering and interaction"},
+  {"name":"area:svg","color":"5319e7","description":"SVG import/export & I/O"},
+  {"name":"area:testing","color":"0e8a16","description":"Tests, fuzzing, CI matrices"},
+  {"name":"area:docs","color":"006b75","description":"Docs, samples, guides"},
+  {"name":"area:tooling","color":"0052cc","description":"Tooling, CI/CD, packaging"},
+  {"name":"area:security","color":"b60205","description":"Security & safety"},
+
+  {"name":"type:feature","color":"0e8a16","description":"New capability"},
+  {"name":"type:perf","color":"fbca04","description":"Performance optimization"},
+  {"name":"type:infra","color":"c2e0c6","description":"Infra/CI/build work"},
+  {"name":"type:docs","color":"fef2c0","description":"Documentation"},
+  {"name":"type:quality","color":"c5def5","description":"Robustness, determinism, invariants"},
+
+  {"name":"priority:P0","color":"b60205","description":"Must-ship for v1"},
+  {"name":"priority:P1","color":"d93f0b","description":"High priority"},
+  {"name":"priority:P2","color":"fbca04","description":"Medium priority"}
+]

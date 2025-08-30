@@ -48,6 +48,9 @@
     <div id="main" style="flex:1; display:flex; min-height:0;">
       <div id="stage" style="flex:1; position:relative; background:#fff; min-width:0;">
         <canvas id="canvas"></canvas>
+        <div id="hud" style="position:absolute; top:6px; left:8px; font:12px/1.4 system-ui, sans-serif; background:rgba(255,255,255,0.8); border:1px solid #e2e2e2; border-radius:6px; padding:4px 8px; color:#333; pointer-events:none;">
+          loading…
+        </div>
       </div>
       <aside id="sidebar" style="width:280px; border-left:1px solid #ddd; background:#fafbfc; display:flex; flex-direction:column; overflow:hidden;">
         <div style="padding:8px 10px; border-bottom:1px solid #eee; font-weight:600; flex:0 0 auto;">Objects</div>
@@ -62,6 +65,7 @@
     <script type="module">
       import init, { Graph } from "../pkg/contour_wasm.js";
       await init();
+      console.log('contour demo: wasm init ok');
 
       const g = new Graph();
       // If saved doc exists, load it
@@ -144,6 +148,8 @@
       })();
 
       function render() {
+        const hud = document.getElementById('hud');
+        try {
         // Rebuild object list if geometry changed
         try {
           const gv = g.geom_version();
@@ -218,7 +224,7 @@
             } catch {}
           }
           ctx.restore();
-          return; // Skip engine edges/nodes to avoid masking the reference
+          // Continue to draw engine edges/nodes underneath for clarity
         }
 
         // Edges (draw when reference overlay is off)
@@ -330,32 +336,66 @@
           ctx.stroke();
         }
 
-        // Handles for selected edge
+        // Handles: show for the whole connected path when an edge is selected
         if (state.selection && state.selection.kind === 'edge') {
-          const id = state.selection.id;
-          const handles = g.get_handles(id);
-          if (handles) {
-            const ed = g.get_edge_data();
-            const idx = Array.from(ed.ids).indexOf(id);
-            if (idx >= 0) {
-              const aId = ed.endpoints[idx*2+0];
-              const bId = ed.endpoints[idx*2+1];
+          const ed = g.get_edge_data();
+          const idsArr = Array.from(ed.ids || []);
+          const endpoints = Array.from(ed.endpoints || []);
+          const kinds = Array.from(ed.kinds || []);
+          const selId = state.selection.id >>> 0;
+          const idxSel = idsArr.indexOf(selId);
+          if (idxSel >= 0) {
+            // Build edge adjacency via shared nodes
+            const edgesByNode = new Map();
+            for (let i = 0; i < idsArr.length; i++) {
+              const aId = endpoints[i*2+0];
+              const bId = endpoints[i*2+1];
+              if (!edgesByNode.has(aId)) edgesByNode.set(aId, []);
+              if (!edgesByNode.has(bId)) edgesByNode.set(bId, []);
+              edgesByNode.get(aId).push(idsArr[i]);
+              edgesByNode.get(bId).push(idsArr[i]);
+            }
+            // BFS over edges connected via nodes (cap at safety limit)
+            const comp = new Set();
+            const q = [selId];
+            while (q.length && comp.size < 5000) {
+              const eId = q.shift();
+              if (comp.has(eId)) continue;
+              comp.add(eId);
+              const ei = idsArr.indexOf(eId);
+              if (ei < 0) continue;
+              const na = endpoints[ei*2+0];
+              const nb = endpoints[ei*2+1];
+              const adjA = edgesByNode.get(na) || [];
+              const adjB = edgesByNode.get(nb) || [];
+              for (const ne of adjA) if (!comp.has(ne)) q.push(ne);
+              for (const ne of adjB) if (!comp.has(ne)) q.push(ne);
+            }
+            // Draw handles for all cubic edges in the component
+            ctx.lineWidth = 1;
+            for (const eId of comp) {
+              const i = idsArr.indexOf(eId);
+              if (i < 0) continue;
+              if (kinds[i] !== 1) continue; // only cubic
+              const aId = endpoints[i*2+0];
+              const bId = endpoints[i*2+1];
               const a = g.get_node(aId);
               const b = g.get_node(bId);
+              const h = g.get_handles(eId);
+              if (!a || !b || !h) continue;
               // stems
               ctx.beginPath();
-              ctx.moveTo(a[0], a[1]); ctx.lineTo(handles[0], handles[1]);
-              ctx.moveTo(b[0], b[1]); ctx.lineTo(handles[2], handles[3]);
+              ctx.moveTo(a[0], a[1]); ctx.lineTo(h[0], h[1]);
+              ctx.moveTo(b[0], b[1]); ctx.lineTo(h[2], h[3]);
               ctx.strokeStyle = '#999';
-              ctx.lineWidth = 1;
               ctx.setLineDash([4, 4]);
               ctx.stroke();
               ctx.setLineDash([]);
               // knobs
               for (let k = 0; k < 2; k++) {
-                const hx = handles[k*2+0];
-                const hy = handles[k*2+1];
-                const hovered = state.hover && state.hover.kind === 'handle' && state.hover.edge === id && state.hover.end === k;
+                const hx = h[k*2+0];
+                const hy = h[k*2+1];
+                const hovered = state.hover && state.hover.kind === 'handle' && state.hover.edge === eId && state.hover.end === k;
                 const radius = hovered ? 5 : 4;
                 ctx.beginPath();
                 ctx.arc(hx, hy, radius, 0, Math.PI * 2);
@@ -412,6 +452,15 @@
           ctx.setLineDash([6, 6]);
           ctx.stroke();
           ctx.setLineDash([]);
+        }
+        // HUD update
+        try {
+          const ecount = (eids && eids.length)|0; const ncount = (nids && nids.length)|0;
+          if (hud) hud.textContent = `nodes: ${ncount} | edges: ${ecount} | ref: ${state.showRef?'on':'off'}`;
+        } catch { if (hud) hud.textContent = 'hud update failed'; }
+        } catch (err) {
+          console.error('render error', err);
+          if (hud) hud.textContent = 'render error: ' + (err && err.message ? err.message : String(err));
         }
       }
 
@@ -640,6 +689,8 @@
       }
 
       canvas.addEventListener('mousedown', (evt) => {
+        // Defensive: ensure Graph is usable
+        if (!g || typeof g.get_edge_data !== 'function') { console.error('Graph not ready'); return; }
         const [x, y] = canvasPoint(evt);
         // Pen tool interactions
         if (state.pen && state.penMode === 'points') {
@@ -677,9 +728,9 @@
         }
         // Pen free draw: start stroke
         if (state.pen && state.penMode === 'free') {
-          const [sx, sy] = snapPoint(x, y, null);
+          // Freehand uses raw pointer positions (no snapping)
           state.freeDrawing = true;
-          state.freePoints = [sx, sy];
+          state.freePoints = [x, y];
           render();
           return;
         }
@@ -743,7 +794,8 @@
           return;
         }
         if (state.pen && state.penMode === 'free' && state.freeDrawing) {
-          const [sx, sy] = snapPoint(x, y, null);
+          // Freehand sampling in raw screen space for smoothness
+          const sx = x, sy = y;
           const pts = state.freePoints || [];
           const n = pts.length;
           const lx = pts[n-2], ly = pts[n-1];
@@ -823,26 +875,15 @@
             const dx = pts[pts.length-2] - pts[0];
             const dy = pts[pts.length-1] - pts[1];
             const close = (dx*dx + dy*dy) <= 12*12;
-            // Decimate intermediate points
-            const out = [pts[0], pts[1]];
-            let px = pts[0], py = pts[1];
-            for (let i = 2; i < pts.length-2; i += 2) {
-              const cx = pts[i], cy = pts[i+1];
-              const ddx = cx - px, ddy = cy - py;
-              if ((ddx*ddx + ddy*ddy) >= 16) { out.push(cx, cy); px = cx; py = cy; }
-            }
-            const endX = pts[pts.length-2], endY = pts[pts.length-1];
-            // Build polyline edge: endpoints become nodes; out (excluding endpoints) are internal points
-            const startId = g.add_node(out[0], out[1]);
-            const endId = g.add_node(endX, endY);
-            // Internal points are out.slice(2)
-            const internal = out.slice(2);
             try {
-              if (typeof g.add_polyline_edge === 'function') {
-                g.add_polyline_edge(startId, endId, new Float32Array(internal));
+              if (typeof g.add_freehand === 'function') {
+                g.add_freehand(new Float32Array(pts), !!close);
               } else {
-                const eid = g.add_edge(startId, endId);
-                if (eid != null && typeof g.set_edge_polyline === 'function') g.set_edge_polyline(eid, new Float32Array(internal));
+                // Fallback: simple polyline if freehand API missing
+                const startId = g.add_node(pts[0], pts[1]);
+                const endId = g.add_node(pts[pts.length-2], pts[pts.length-1]);
+                const internal = pts.slice(2, pts.length-2);
+                if (typeof g.add_polyline_edge === 'function') g.add_polyline_edge(startId, endId, new Float32Array(internal));
               }
             } catch {}
             scheduleRegions();

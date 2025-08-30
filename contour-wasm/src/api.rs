@@ -108,6 +108,13 @@ impl Graph {
     pub fn add_polyline_edge(&mut self, a: u32, b: u32, points: &Float32Array) -> Option<u32> { let pts=to_pairs(points); self.inner.add_polyline_edge(a,b,&pts) }
     pub fn set_edge_polyline(&mut self, id: u32, points: &Float32Array) -> bool { let pts=to_pairs(points); self.inner.set_edge_polyline(id, &pts) }
     pub fn get_polyline_points(&self, id: u32) -> JsValue { if let Some(pts)=self.inner.get_polyline_points(id) { let mut flat=Vec::with_capacity(pts.len()*2); for (x,y) in pts { flat.push(x); flat.push(y); } Float32Array::from(flat.as_slice()).into() } else { JsValue::NULL } }
+
+    // Freehand fitting
+    pub fn add_freehand(&mut self, points: &Float32Array, close: bool) -> js_sys::Uint32Array {
+        let pts = to_pairs(points);
+        let edges = self.inner.add_freehand(&pts, close);
+        crate::interop::arr_u32(&edges)
+    }
 }
 
 fn to_pairs(arr: &Float32Array) -> Vec<(f32,f32)> { let len=arr.length() as usize; let mut buf=vec![0.0f32; len]; arr.copy_to(&mut buf); let mut out=Vec::with_capacity(len/2); let mut i=0; while i+1<len { out.push((buf[i],buf[i+1])); i+=2; } out }

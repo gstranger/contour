@@ -90,6 +90,12 @@ Demo controls:
 - `graph.set_region_fill(key: number, filled: boolean)`
 - `graph.set_region_color(key: number, r: number, g: number, b: number, a: number)`
 
+### Freehand (new)
+
+- `graph.add_freehand(points: Float32Array, close: boolean) -> Uint32Array`
+  - Fits a smooth cubic Bezier chain (Catmull–Rom with corner detection) through sampled points.
+  - Intended for the Pen → Free Draw mode in the demo.
+
 ## Notes
 
 - The crate is built as a `cdylib` for WebAssembly and uses `wasm-bindgen` for bindings.

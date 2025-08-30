@@ -1,6 +1,6 @@
 pub mod model;
-pub mod geometry { pub mod math; pub mod flatten; pub mod tolerance; }
-pub mod algorithms { pub mod picking; pub mod regions; }
+pub mod geometry { pub mod math; pub mod flatten; pub mod tolerance; pub mod intersect; }
+pub mod algorithms { pub mod picking; pub mod regions; pub mod planarize; }
 mod json;
 mod svg;
 
@@ -188,6 +188,7 @@ impl Graph {
         None
     }
     pub fn set_handle_pos(&mut self, id: u32, end: u8, x: f32, y: f32) -> bool {
+        if end != 0 && end != 1 { return false; }
         if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
             let (mut ha, mut hb, mode) = match edge.kind { EdgeKind::Cubic { ha, hb, mode } => (ha,hb,mode), _ => return false };
             let a = match self.nodes.get(edge.a as usize).and_then(|n| *n) { Some(n)=>n, None=>return false };
@@ -229,8 +230,8 @@ impl Graph {
     }
     pub fn bend_edge_to(&mut self, id: u32, t: f32, tx: f32, ty: f32, stiffness: f32) -> bool {
         if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
-            let a = self.nodes[edge.a as usize].unwrap();
-            let b = self.nodes[edge.b as usize].unwrap();
+            let a = if let Some(n)=self.nodes.get(edge.a as usize).and_then(|n| *n) { n } else { return true };
+            let b = if let Some(n)=self.nodes.get(edge.b as usize).and_then(|n| *n) { n } else { return true };
             let t = geometry::tolerance::clamp01(t);
             let (mut ha, mut hb, mode) = match edge.kind {
                 EdgeKind::Cubic{ha,hb,mode} => (ha,hb,mode),
@@ -333,7 +334,10 @@ impl Graph {
 
         let mut pts: Vec<(f32,f32)> = points.iter().copied().collect();
         // Basic guard and sampling sanity
-        pts.dedup_by(|a,b| (a.0-b.0).abs()<1e-6 && (a.1-b.1).abs()<1e-6);
+        {
+            use crate::geometry::tolerance::EPS_POS;
+            pts.dedup_by(|a,b| (a.0-b.0).abs()<EPS_POS && (a.1-b.1).abs()<EPS_POS);
+        }
         if pts.len()<2 { return Vec::new(); }
         // Simplify then resample to even spacing (~24 px)
         // Strong simplify first

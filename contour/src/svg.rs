@@ -3,11 +3,15 @@ use std::collections::HashMap;
 
 pub fn to_svg_paths_impl(g: &Graph) -> Vec<String> {
     let mut paths=Vec::new();
-    for e in g.edges.iter() { if let Some(e)=e { let a=g.nodes[e.a as usize].unwrap(); let b=g.nodes[e.b as usize].unwrap(); match &e.kind {
-        EdgeKind::Line => paths.push(format!("M {} {} L {} {}", a.x,a.y,b.x,b.y)),
-        EdgeKind::Cubic{ha,hb,..} => { let p1x=a.x+ha.x; let p1y=a.y+ha.y; let p2x=b.x+hb.x; let p2y=b.y+hb.y; paths.push(format!("M {} {} C {} {}, {} {}, {} {}", a.x,a.y,p1x,p1y,p2x,p2y,b.x,b.y)); },
-        EdgeKind::Polyline{ points } => { let mut d=format!("M {} {}", a.x,a.y); for p in points { d.push_str(&format!(" L {} {}", p.x,p.y)); } d.push_str(&format!(" L {} {}", b.x,b.y)); paths.push(d); },
-    }} }
+    for e in g.edges.iter() { if let Some(e)=e {
+        let a = if let Some(n)=g.nodes.get(e.a as usize).and_then(|n| *n) { n } else { continue };
+        let b = if let Some(n)=g.nodes.get(e.b as usize).and_then(|n| *n) { n } else { continue };
+        match &e.kind {
+            EdgeKind::Line => paths.push(format!("M {} {} L {} {}", a.x,a.y,b.x,b.y)),
+            EdgeKind::Cubic{ha,hb,..} => { let p1x=a.x+ha.x; let p1y=a.y+ha.y; let p2x=b.x+hb.x; let p2y=b.y+hb.y; paths.push(format!("M {} {} C {} {}, {} {}, {} {}", a.x,a.y,p1x,p1y,p2x,p2y,b.x,b.y)); },
+            EdgeKind::Polyline{ points } => { let mut d=format!("M {} {}", a.x,a.y); for p in points { d.push_str(&format!(" L {} {}", p.x,p.y)); } d.push_str(&format!(" L {} {}", b.x,b.y)); paths.push(d); },
+        }
+    }}
     paths
 }
 

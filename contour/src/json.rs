@@ -27,9 +27,18 @@ pub fn from_json_impl(g: &mut Graph, v: Value) -> bool {
         let max_edge=doc.edges.iter().map(|e| e.id).max().unwrap_or(0);
         g.nodes=vec![None; (max_node as usize)+1]; g.edges=vec![None; (max_edge as usize)+1]; g.fills.clear();
         for n in doc.nodes { g.nodes[n.id as usize]=Some(crate::model::Node{ x:n.x, y:n.y }); }
-        for e in doc.edges { let kind=match e.kind.unwrap_or(EdgeDeKind::Line) { EdgeDeKind::Line=>crate::model::EdgeKind::Line, EdgeDeKind::Cubic{ha,hb,mode}=>crate::model::EdgeKind::Cubic{ha,hb,mode:mode.unwrap_or(HandleMode::Free)}, EdgeDeKind::Polyline{points}=>crate::model::EdgeKind::Polyline{ points } }; g.edges[e.id as usize]=Some(crate::model::Edge{ a:e.a,b:e.b,kind,stroke:e.stroke,stroke_width:e.width.unwrap_or(2.0) }); }
+        for e in doc.edges {
+            let a_ok = g.nodes.get(e.a as usize).and_then(|n| *n).is_some();
+            let b_ok = g.nodes.get(e.b as usize).and_then(|n| *n).is_some();
+            if !a_ok || !b_ok { continue; }
+            let kind=match e.kind.unwrap_or(EdgeDeKind::Line) {
+                EdgeDeKind::Line=>crate::model::EdgeKind::Line,
+                EdgeDeKind::Cubic{ha,hb,mode}=>crate::model::EdgeKind::Cubic{ha,hb,mode:mode.unwrap_or(HandleMode::Free)},
+                EdgeDeKind::Polyline{points}=>crate::model::EdgeKind::Polyline{ points }
+            };
+            g.edges[e.id as usize]=Some(crate::model::Edge{ a:e.a,b:e.b,kind,stroke:e.stroke,stroke_width:e.width.unwrap_or(2.0) });
+        }
         if let Some(fills)=doc.fills { for f in fills { g.fills.insert(f.key, FillState{filled:f.filled,color:f.color}); } }
         g.geom_ver=g.geom_ver.wrapping_add(1); true
     } else { false }
 }
-

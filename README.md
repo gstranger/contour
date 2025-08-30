@@ -44,14 +44,14 @@ This creates a `pkg/` folder with JS/WASM bindings.
 
 WASM unit tests are written with `wasm-bindgen-test` under `tests/`.
 
-Run in a headless browser (requires Chrome or Firefox installed):
+Run in a headless browser (requires Chrome or Firefox installed). Run from the `contour-wasm/` crate directory:
 
 ```bash
-# Chrome
-wasm-pack test --headless --chrome
+# Chrome (from contour-wasm/)
+cd contour-wasm && wasm-pack test --headless --chrome && cd -
 
 # or Firefox
-wasm-pack test --headless --firefox
+cd contour-wasm && wasm-pack test --headless --firefox && cd -
 ```
 
 You can also run them in a non-headless browser by omitting `--headless`.
@@ -120,3 +120,4 @@ Strict variants (examples):
 - The crate is built as a `cdylib` for WebAssembly and uses `wasm-bindgen` for bindings.
 - The simple web demo imports from `./pkg/contour_wasm.js`, which is created by building the `contour-wasm` crate.
 - JSON `to_json` now includes `version` and `fills` arrays; `from_json` reads them.
+- Robustness: editing operations clamp parameters and treat degenerate inputs as no-ops. Internals avoid panics under zero-length edges, coincident endpoints, and tiny faces. See `docs/epsilons.md` for the centralized tolerance policy.

@@ -13,6 +13,20 @@ Constants
 - EPS_ANG (1e-6): angular comparison slack in radians.
 - QUANT_SCALE (10.0): 0.1 px grid for region quantization.
 - MAX_FLATTEN_DEPTH (16): recursion cap for cubic flattening.
+- EPS_CONSTRAINT (1e-3): handle constraint tolerance for tests/invariants.
+
+Constants Table
+
+| Constant | Value | Purpose |
+|---|---:|---|
+| EPS_POS | 1e-4 | Point coincidence threshold (px) |
+| EPS_LEN | 1e-6 | Zero-length vector threshold |
+| EPS_DENOM | 1e-8 | Denominator guard for LS/ratios |
+| EPS_FACE_AREA | 1e-2 | Tiny face filter area (px^2) |
+| EPS_ANG | 1e-6 | Angular comparison slack (radians) |
+| QUANT_SCALE | 10.0 | Quantization scale (1/0.1 px grid) |
+| MAX_FLATTEN_DEPTH | 16 | Adaptive flatten recursion cap |
+| EPS_CONSTRAINT | 1e-3 | Handle-mode constraint tolerance |
 
 Helpers
 - clamp01(x): clamps parameter x to [0,1].
@@ -25,11 +39,11 @@ Helpers
 Usage Map
 - Picking: clamp cubic t; handle degenerate cubics (all points coincident).
 - Bend: clamp t; guard denom; zero-length segments become no-ops; handle modes use EPS_LEN when normalizing.
-- Regions: QUANT_SCALE replaces magic 10.0; EPS_FACE_AREA filters tiny faces; CCW traversal uses tolerant angle step.
+- Regions: QUANT_SCALE replaces magic 10.0; EPS_FACE_AREA filters tiny faces and centroid fallback; CCW traversal uses tolerant angle step.
 - Flatten: cap recursion with MAX_FLATTEN_DEPTH.
+- Freehand: deduplicate coincident samples with EPS_POS.
 
 Behavioral Guarantees
 - No panics: degenerate inputs are treated as no-ops.
 - Stable topology: tiny faces filtered; quantization consistent at 0.1 px.
 - WASM API: parameters outside domains are clamped; edits succeed or return gracefully.
-

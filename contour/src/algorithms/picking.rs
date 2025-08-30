@@ -14,7 +14,8 @@ pub fn pick_impl(g: &Graph, x: f32, y: f32, tol: f32) -> Option<crate::Pick> {
     let mut best_handle: Option<(u32,u8,f32)> = None;
     for (i,e) in g.edges.iter().enumerate() {
         if let Some(e)=e { if let EdgeKind::Cubic{ha,hb,..}=e.kind {
-            let a=g.nodes[e.a as usize].unwrap(); let b=g.nodes[e.b as usize].unwrap();
+            let a = if let Some(n)=g.nodes.get(e.a as usize).and_then(|n| *n) { n } else { continue };
+            let b = if let Some(n)=g.nodes.get(e.b as usize).and_then(|n| *n) { n } else { continue };
             let p1x=a.x+ha.x; let p1y=a.y+ha.y; let p2x=b.x+hb.x; let p2y=b.y+hb.y;
             let d1=(p1x-x).powi(2)+(p1y-y).powi(2); if d1<=tol2 && best_handle.map_or(true, |(_,_,bd)| d1<bd) { best_handle=Some((i as u32, 0, d1)); }
             let d2=(p2x-x).powi(2)+(p2y-y).powi(2); if d2<=tol2 && best_handle.map_or(true, |(_,_,bd)| d2<bd) { best_handle=Some((i as u32, 1, d2)); }
@@ -26,16 +27,19 @@ pub fn pick_impl(g: &Graph, x: f32, y: f32, tol: f32) -> Option<crate::Pick> {
     for (i,e) in g.edges.iter().enumerate() {
         if let Some(e)=e { match e.kind {
             EdgeKind::Line => {
-                let a=g.nodes[e.a as usize].unwrap(); let b=g.nodes[e.b as usize].unwrap();
+                let a = if let Some(n)=g.nodes.get(e.a as usize).and_then(|n| *n) { n } else { continue };
+                let b = if let Some(n)=g.nodes.get(e.b as usize).and_then(|n| *n) { n } else { continue };
                 let (d2,t)=seg_distance_sq(x,y,a.x,a.y,b.x,b.y); if d2<=tol2 { if best_edge.map_or(true, |(_,bd,_)| d2<bd) { best_edge=Some((i as u32, d2, t)); } }
             }
             EdgeKind::Cubic{ha,hb,..} => {
-                let a=g.nodes[e.a as usize].unwrap(); let b=g.nodes[e.b as usize].unwrap();
+                let a = if let Some(n)=g.nodes.get(e.a as usize).and_then(|n| *n) { n } else { continue };
+                let b = if let Some(n)=g.nodes.get(e.b as usize).and_then(|n| *n) { n } else { continue };
                 let p1x=a.x+ha.x; let p1y=a.y+ha.y; let p2x=b.x+hb.x; let p2y=b.y+hb.y;
                 let (d2,t)=cubic_distance_sq(x,y,a.x,a.y,p1x,p1y,p2x,p2y,b.x,b.y); if d2<=tol2 { if best_edge.map_or(true, |(_,bd,_)| d2<bd) { best_edge=Some((i as u32, d2, clamp01(t))); } }
             }
             EdgeKind::Polyline{ ref points } => {
-                let a=g.nodes[e.a as usize].unwrap(); let b=g.nodes[e.b as usize].unwrap();
+                let a = if let Some(n)=g.nodes.get(e.a as usize).and_then(|n| *n) { n } else { continue };
+                let b = if let Some(n)=g.nodes.get(e.b as usize).and_then(|n| *n) { n } else { continue };
                 let mut prevx=a.x; let mut prevy=a.y; let mut length=0.0; let mut segs=Vec::new();
                 for p in points { let x2=p.x; let y2=p.y; let seg_len=((x2-prevx).powi(2)+(y2-prevy).powi(2)).sqrt(); if seg_len>0.0 { segs.push((prevx,prevy,x2,y2,seg_len)); length+=seg_len; } prevx=x2; prevy=y2; }
                 let seg_len=((b.x-prevx).powi(2)+(b.y-prevy).powi(2)).sqrt(); if seg_len>0.0 { segs.push((prevx,prevy,b.x,b.y,seg_len)); length+=seg_len; }

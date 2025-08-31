@@ -1,5 +1,5 @@
 pub mod model;
-pub mod geometry { pub mod math; pub mod flatten; pub mod tolerance; pub mod intersect; }
+pub mod geometry { pub mod math; pub mod flatten; pub mod tolerance; pub mod intersect; pub mod limits; }
 pub mod algorithms { pub mod picking; pub mod regions; pub mod planarize; }
 mod json;
 mod svg;
@@ -161,6 +161,7 @@ impl Graph {
     // JSON
     pub fn to_json_value(&self) -> serde_json::Value { json::to_json_impl(self) }
     pub fn from_json_value(&mut self, v: serde_json::Value) -> bool { json::from_json_impl(self, v) }
+    pub fn from_json_value_strict(&mut self, v: serde_json::Value) -> Result<bool, (&'static str, String)> { json::from_json_impl_strict(self, v) }
 
     // Clear
     pub fn clear(&mut self) { self.nodes.clear(); self.edges.clear(); self.fills.clear(); self.bump(); }

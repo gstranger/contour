@@ -109,7 +109,10 @@ impl Graph {
     pub fn from_json(&mut self, v: JsValue) -> bool { match serde_wasm_bindgen::from_value::<serde_json::Value>(v) { Ok(val)=> self.inner.from_json_value(val), Err(_)=> false } }
     pub fn from_json_res(&mut self, v: JsValue) -> JsValue {
         match serde_wasm_bindgen::from_value::<serde_json::Value>(v) {
-            Ok(val) => error::ok(JsValue::from_bool(self.inner.from_json_value(val))),
+            Ok(val) => match self.inner.from_json_value_strict(val) {
+                Ok(ok) => error::ok(JsValue::from_bool(ok)),
+                Err((code,msg)) => error::err(code, msg, None)
+            },
             Err(e) => error::err("json_parse", format!("{}", e), None)
         }
     }

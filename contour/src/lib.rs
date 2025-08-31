@@ -84,7 +84,15 @@ impl Graph {
         id
     }
     pub fn move_node(&mut self, id: u32, x: f32, y: f32) -> bool {
-        if let Some(Some(n)) = self.nodes.get_mut(id as usize) { n.x = x; n.y = y; self.bump(); return true; }
+        if !x.is_finite() || !y.is_finite() { return false; }
+        if let Some(Some(n)) = self.nodes.get_mut(id as usize) {
+            let dx = x - n.x; let dy = y - n.y;
+            if (dx*dx + dy*dy) <= crate::geometry::tolerance::EPS_POS * crate::geometry::tolerance::EPS_POS {
+                // No-op move within epsilon: do not bump version
+                return true;
+            }
+            n.x = x; n.y = y; self.bump(); return true;
+        }
         false
     }
     pub fn get_node(&self, id: u32) -> Option<(f32,f32)> {
@@ -189,12 +197,22 @@ impl Graph {
     }
     pub fn set_handle_pos(&mut self, id: u32, end: u8, x: f32, y: f32) -> bool {
         if end != 0 && end != 1 { return false; }
+        if !x.is_finite() || !y.is_finite() { return false; }
         if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
             let (mut ha, mut hb, mode) = match edge.kind { EdgeKind::Cubic { ha, hb, mode } => (ha,hb,mode), _ => return false };
             let a = match self.nodes.get(edge.a as usize).and_then(|n| *n) { Some(n)=>n, None=>return false };
             let b = match self.nodes.get(edge.b as usize).and_then(|n| *n) { Some(n)=>n, None=>return false };
-            if end==0 { ha = Vec2 { x: x-a.x, y: y-a.y }; }
-            else { hb = Vec2 { x: x-b.x, y: y-b.y }; }
+            if end==0 {
+                let nx = x-a.x; let ny = y-a.y;
+                let dx = nx - ha.x; let dy = ny - ha.y;
+                if (dx*dx + dy*dy) <= crate::geometry::tolerance::EPS_POS * crate::geometry::tolerance::EPS_POS { return true; }
+                ha = Vec2 { x: nx, y: ny };
+            } else {
+                let nx = x-b.x; let ny = y-b.y;
+                let dx = nx - hb.x; let dy = ny - hb.y;
+                if (dx*dx + dy*dy) <= crate::geometry::tolerance::EPS_POS * crate::geometry::tolerance::EPS_POS { return true; }
+                hb = Vec2 { x: nx, y: ny };
+            }
             let (ha, hb) = Self::enforce_handle_constraints(ha, hb, mode, Some(end));
             edge.kind = EdgeKind::Cubic { ha, hb, mode };
             self.bump(); return true;
@@ -211,6 +229,7 @@ impl Graph {
         false
     }
     pub fn set_edge_cubic(&mut self, id: u32, p1x: f32, p1y: f32, p2x: f32, p2y: f32) -> bool {
+        if !p1x.is_finite() || !p1y.is_finite() || !p2x.is_finite() || !p2y.is_finite() { return false; }
         if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
             let a = match self.nodes.get(edge.a as usize).and_then(|n| *n) { Some(n)=>n, None=>return false };
             let b = match self.nodes.get(edge.b as usize).and_then(|n| *n) { Some(n)=>n, None=>return false };
@@ -220,11 +239,21 @@ impl Graph {
             let ha_l = (ha.x*ha.x + ha.y*ha.y).sqrt();
             let hb_l = (hb.x*hb.x + hb.y*hb.y).sqrt();
             if ha_l <= geometry::tolerance::EPS_LEN && hb_l <= geometry::tolerance::EPS_LEN {
-                edge.kind = EdgeKind::Line;
+                // No-op if already a line
+                let was_line = matches!(edge.kind, EdgeKind::Line);
+                if !was_line { edge.kind = EdgeKind::Line; self.bump(); }
+                return true;
             } else {
-                edge.kind = EdgeKind::Cubic { ha, hb, mode: HandleMode::Free };
+                // If unchanged within epsilon, do not bump
+                let mut changed = true;
+                if let EdgeKind::Cubic { ha:oha, hb:ohb, .. } = edge.kind {
+                    let da = (ha.x - oha.x)*(ha.x - oha.x) + (ha.y - oha.y)*(ha.y - oha.y);
+                    let db = (hb.x - ohb.x)*(hb.x - ohb.x) + (hb.y - ohb.y)*(hb.y - ohb.y);
+                    if da <= geometry::tolerance::EPS_POS*geometry::tolerance::EPS_POS && db <= geometry::tolerance::EPS_POS*geometry::tolerance::EPS_POS { changed = false; }
+                }
+                if changed { edge.kind = EdgeKind::Cubic { ha, hb, mode: HandleMode::Free }; self.bump(); }
+                return true;
             }
-            self.bump(); return true;
         }
         false
     }
@@ -244,6 +273,7 @@ impl Graph {
                 }
                 EdgeKind::Polyline{..} => return false,
             };
+            let orig_ha = ha; let orig_hb = hb;
             let p1x=a.x+ha.x; let p1y=a.y+ha.y; let p2x=b.x+hb.x; let p2y=b.y+hb.y;
             let (cx,cy)=geometry::math::cubic_point(t,a.x,a.y,p1x,p1y,p2x,p2y,b.x,b.y);
             let dx=tx-cx; let dy=ty-cy; let c1=3.0*(1.0-t).powi(2)*t; let c2=3.0*(1.0-t)*t.powi(2);
@@ -258,6 +288,12 @@ impl Graph {
             ha.x+=d1x; ha.y+=d1y; hb.x+=d2x; hb.y+=d2y;
             let changed = if t <= 0.5 { Some(0) } else { Some(1) };
             let (ha, hb) = Self::enforce_handle_constraints(ha, hb, mode, changed);
+            // No-op if handles unchanged within epsilon
+            let da = (ha.x - orig_ha.x)*(ha.x - orig_ha.x) + (ha.y - orig_ha.y)*(ha.y - orig_ha.y);
+            let db = (hb.x - orig_hb.x)*(hb.x - orig_hb.x) + (hb.y - orig_hb.y)*(hb.y - orig_hb.y);
+            if da <= geometry::tolerance::EPS_POS*geometry::tolerance::EPS_POS && db <= geometry::tolerance::EPS_POS*geometry::tolerance::EPS_POS {
+                return true;
+            }
             // Commit cubic kind (including line->cubic conversion)
             edge.kind=EdgeKind::Cubic{ha,hb,mode}; self.bump(); return true;
         }

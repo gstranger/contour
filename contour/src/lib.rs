@@ -5,10 +5,10 @@ mod json;
 mod svg;
 
 use serde::{Serialize, Deserialize};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use model::{Color, FillState, Node, HandleMode, Vec2, EdgeKind, Edge};
 
-#[derive(Default)]
 pub struct Graph {
     pub(crate) nodes: Vec<Option<Node>>, // id is index
     pub(crate) edges: Vec<Option<Edge>>, // id is index
@@ -17,6 +17,8 @@ pub struct Graph {
     pub(crate) last_geom_ver: u64,
     pub(crate) prev_regions: Vec<(u32, f32, f32)>, // (key, cx, cy)
     pub(crate) flatten_tol: f32,
+    // Picking spatial index: (built_geom_ver, index)
+    pub(crate) pick_index: RefCell<Option<(u64, crate::algorithms::picking::PickIndex)>>,
 }
 
 pub struct EdgeArrays { pub ids: Vec<u32>, pub endpoints: Vec<u32>, pub kinds: Vec<u8>, pub stroke_rgba: Vec<u8>, pub stroke_widths: Vec<f32> }
@@ -71,9 +73,7 @@ impl Graph {
             }
         }
     }
-    pub fn new() -> Self {
-        Graph { nodes: Vec::new(), edges: Vec::new(), fills: HashMap::new(), geom_ver: 1, last_geom_ver: 0, prev_regions: Vec::new(), flatten_tol: 0.25 }
-    }
+    pub fn new() -> Self { Graph { nodes: Vec::new(), edges: Vec::new(), fills: HashMap::new(), geom_ver: 1, last_geom_ver: 0, prev_regions: Vec::new(), flatten_tol: 0.25, pick_index: RefCell::new(None) } }
     pub fn geom_version(&self) -> u64 { self.geom_ver }
 
     // Nodes

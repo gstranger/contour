@@ -15,7 +15,7 @@ pub struct Graph {
     pub(crate) fills: HashMap<u32, FillState>, // region key -> fill
     pub(crate) geom_ver: u64,
     pub(crate) last_geom_ver: u64,
-    pub(crate) prev_regions: Vec<(u32, f32, f32)>, // (key, cx, cy)
+    pub(crate) prev_regions: Vec<(u32, i32, i32, f32)>, // (key, qcx, qcy, area)
     pub(crate) flatten_tol: f32,
     // Picking spatial index: (built_geom_ver, index)
     pub(crate) pick_index: RefCell<Option<(u64, crate::algorithms::picking::PickIndex)>>,

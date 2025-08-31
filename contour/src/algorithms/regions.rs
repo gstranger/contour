@@ -29,12 +29,12 @@ impl Graph {
         let half_eid = plan.half_eid;
 
         let m=half_from.len();
-        let mut adj:Vec<Vec<(usize,f32)>>=vec![Vec::new(); verts.len()];
-        for i in 0..m { let u=half_from[i]; let v=half_to[i]; let a=(verts[v].y-verts[u].y).atan2(verts[v].x-verts[u].x); adj[u].push((v,a)); }
-        for lst in &mut adj { lst.sort_by(|x,y| x.1.partial_cmp(&y.1).unwrap()); }
+        let mut adj:Vec<Vec<(usize,f32,usize)>>=vec![Vec::new(); verts.len()];
+        for i in 0..m { let u=half_from[i]; let v=half_to[i]; let a=(verts[v].y-verts[u].y).atan2(verts[v].x-verts[u].x); adj[u].push((v,a,i)); }
+        for lst in &mut adj { lst.sort_by(|x,y| { let c=x.1.partial_cmp(&y.1).unwrap(); if c!=std::cmp::Ordering::Equal { c } else { x.0.cmp(&y.0).then(x.2.cmp(&y.2)) } }); }
         let mut idx_map:HashMap<(usize,usize),Vec<usize>>=HashMap::new(); for i in 0..m { idx_map.entry((half_from[i], half_to[i])).or_default().push(i); }
         let mut used=vec![false;m]; let mut regions=Vec::new();
-        for i_start in 0..m { if used[i_start] { continue; } let mut i_he=i_start; let mut cycle:Vec<usize>=Vec::new(); let mut cycle_eids=Vec::new(); let mut guard=0; loop { used[i_he]=true; let v=half_to[i_he]; let u=half_from[i_he]; cycle.push(u); cycle_eids.push(half_eid[i_he]); let lst=&adj[v]; if lst.is_empty() { break; } let mut rev_idx=None; if let Some(cands)=idx_map.get(&(v,u)) { for &c in cands { if half_from[c]==v && half_to[c]==u { rev_idx=Some(c); break; } } } let _rev_i = if let Some(ix)=rev_idx { ix } else { break }; let ang=(verts[u].y-verts[v].y).atan2(verts[u].x-verts[v].x); let mut idx=0usize; while idx<lst.len() && lst[idx].1 <= ang + EPS_ANG { idx+=1; } let next = if idx==lst.len() { 0 } else { idx }; let (w,_)=lst[next]; if let Some(list)=idx_map.get(&(v,w)) { let mut found=None; for &cand in list { if !used[cand] { found=Some(cand); break; } } if let Some(nhe)=found { i_he=nhe; } else { break; } } else { break; } guard+=1; if guard>100000 { break; } if i_he==i_start { break; } }
+        for i_start in 0..m { if used[i_start] { continue; } let mut i_he=i_start; let mut cycle:Vec<usize>=Vec::new(); let mut cycle_eids=Vec::new(); let mut guard=0; loop { used[i_he]=true; let v=half_to[i_he]; let u=half_from[i_he]; cycle.push(u); cycle_eids.push(half_eid[i_he]); let lst=&adj[v]; if lst.is_empty() { break; } let mut rev_idx=None; if let Some(cands)=idx_map.get(&(v,u)) { for &c in cands { if half_from[c]==v && half_to[c]==u { rev_idx=Some(c); break; } } } let _rev_i = if let Some(ix)=rev_idx { ix } else { break }; let ang=(verts[u].y-verts[v].y).atan2(verts[u].x-verts[v].x); let mut idx=0usize; while idx<lst.len() && lst[idx].1 <= ang + EPS_ANG { idx+=1; } let next = if idx==lst.len() { 0 } else { idx }; let (w,_,_)=lst[next]; if let Some(list)=idx_map.get(&(v,w)) { let mut found=None; for &cand in list { if !used[cand] { found=Some(cand); break; } } if let Some(nhe)=found { i_he=nhe; } else { break; } } else { break; } guard+=1; if guard>100000 { break; } if i_he==i_start { break; } }
             if cycle.len()>=3 { let mut poly=Vec::new(); for &idx in &cycle { poly.push(Vec2{x:verts[idx].x, y:verts[idx].y}); } let area=polygon_area(&poly); if area.abs() < EPS_FACE_AREA { continue; } let mut seq=Vec::new(); for &e in &cycle_eids { if seq.last().copied()!=Some(e) { seq.push(e);} } if seq.len()>=2 && seq.first()==seq.last() { seq.pop(); } let key=region_key_from_edges(&seq); regions.push(Region{ key, points: poly, area }); }
         }
         if regions.is_empty() { regions = self.find_simple_cycles(); }
@@ -58,11 +58,39 @@ impl Graph {
 
 pub fn get_regions_with_fill(g: &mut Graph) -> Vec<serde_json::Value> {
     #[derive(Serialize)] struct RegionSer { key:u32, area:f32, filled:bool, color:Option<[u8;4]>, points:Vec<f32> }
-    let regions = g.compute_regions();
+    let mut regions = g.compute_regions();
+    // Deterministic output: sort by key
+    regions.sort_by(|a,b| a.key.cmp(&b.key));
     if g.last_geom_ver != g.geom_ver {
-        let mut new_fills=HashMap::new(); let mut new_prev=Vec::with_capacity(regions.len());
-        for r in &regions { let (cx,cy)=polygon_centroid(&r.points); new_prev.push((r.key,cx,cy)); }
-        for (k_new,cx,cy) in &new_prev { let mut best:Option<(u32,f32)>=None; for (k_old,ox,oy) in &g.prev_regions { let dx=cx-ox; let dy=cy-oy; let d2=dx*dx+dy*dy; if best.map_or(true, |(_,bd)| d2<bd) { best=Some((*k_old,d2)); } } let st = if let Some((old_key,d2))=best { if d2<400.0 { g.fills.get(&old_key).copied().unwrap_or(FillState{filled:true,color:None}) } else { g.fills.get(k_new).copied().unwrap_or(FillState{filled:true,color:None}) } } else { g.fills.get(k_new).copied().unwrap_or(FillState{filled:true,color:None}) }; new_fills.insert(*k_new, st); }
+        let mut new_prev: Vec<(u32,i32,i32,f32)> = Vec::with_capacity(regions.len());
+        for r in &regions { let (cx,cy)=polygon_centroid(&r.points); let qx=(cx*QUANT_SCALE).round() as i32; let qy=(cy*QUANT_SCALE).round() as i32; new_prev.push((r.key,qx,qy,r.area)); }
+        // Deterministic remap: greedy nearest with tie-breakers
+        let mut new_fills=HashMap::new();
+        let old_prev = g.prev_regions.clone();
+        let mut claimed: HashMap<u32,bool> = HashMap::new();
+        let mut order: Vec<usize> = (0..new_prev.len()).collect();
+        order.sort_by(|&i,&j| new_prev[i].1.cmp(&new_prev[j].1)
+            .then(new_prev[i].2.cmp(&new_prev[j].2))
+            .then(new_prev[i].3.partial_cmp(&new_prev[j].3).unwrap())
+            .then(new_prev[i].0.cmp(&new_prev[j].0))
+        );
+        for idx in order {
+            let (k_new,qx,qy,area_new) = new_prev[idx];
+            let mut best: Option<(u32, i64, f32)> = None;
+            for (k_old,oqx,oqy,area_old) in &old_prev {
+                if claimed.get(k_old).copied().unwrap_or(false) { continue; }
+                let dx = (qx as i64) - (*oqx as i64); let dy = (qy as i64) - (*oqy as i64);
+                let d2 = dx*dx + dy*dy;
+                let ad = (area_new - *area_old).abs();
+                best = match best { None => Some((*k_old,d2,ad)), Some((bk,bd,ba)) => {
+                    if d2 < bd { Some((*k_old,d2,ad)) }
+                    else if d2 == bd && ad < ba { Some((*k_old,d2,ad)) }
+                    else if d2 == bd && (ad - ba).abs() <= f32::EPSILON && *k_old < bk { Some((*k_old,d2,ad)) } else { Some((bk,bd,ba)) }
+                } };
+            }
+            let st = if let Some((old_key,_,_))=best { claimed.insert(old_key,true); g.fills.get(&old_key).copied().unwrap_or(FillState{filled:true,color:None}) } else { g.fills.get(&k_new).copied().unwrap_or(FillState{filled:true,color:None}) };
+            new_fills.insert(k_new, st);
+        }
         g.fills=new_fills; g.prev_regions=new_prev; g.last_geom_ver=g.geom_ver;
     }
     regions.into_iter().map(|r| {

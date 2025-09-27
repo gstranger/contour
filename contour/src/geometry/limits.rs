@@ -16,12 +16,15 @@ pub const MAX_SVG_SEGMENTS: usize = 500_000; // expanded segments across L/C/Z
 
 // Numeric bounds
 pub const COORD_MIN: f32 = -10_000_000.0;
-pub const COORD_MAX: f32 =  10_000_000.0;
+pub const COORD_MAX: f32 = 10_000_000.0;
 pub const WIDTH_MAX: f32 = 10_000.0;
 
 #[inline]
-pub fn in_coord_bounds(x: f32) -> bool { x.is_finite() && x >= COORD_MIN && x <= COORD_MAX }
+pub fn in_coord_bounds(x: f32) -> bool {
+    x.is_finite() && x >= COORD_MIN && x <= COORD_MAX
+}
 
 #[inline]
-pub fn in_width_bounds(w: f32) -> bool { w.is_finite() && w > 0.0 && w <= WIDTH_MAX }
-
+pub fn in_width_bounds(w: f32) -> bool {
+    w.is_finite() && w > 0.0 && w <= WIDTH_MAX
+}

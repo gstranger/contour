@@ -1,8 +1,8 @@
-use wasm_bindgen_test::*;
 use contour_wasm::Graph;
-use js_sys::{Reflect, Uint32Array, Float32Array};
-use wasm_bindgen::JsValue;
+use js_sys::{Float32Array, Reflect, Uint32Array};
 use serde::Deserialize;
+use wasm_bindgen::JsValue;
+use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -55,7 +55,10 @@ fn pick_node_and_edge() {
     // pick near node a
     let p = g.pick(102.0, 98.0, 10.0);
     #[derive(Deserialize)]
-    struct Pick { kind: String, id: f64 }
+    struct Pick {
+        kind: String,
+        id: f64,
+    }
     let pn: Pick = serde_wasm_bindgen::from_value(p).unwrap();
     assert_eq!(pn.kind, "node");
     assert_eq!(pn.id as u32, a);
@@ -75,11 +78,22 @@ fn json_roundtrip_and_clear() {
 
     let j = g.to_json();
     #[derive(Deserialize)]
-    struct NodeSer { id: u32, x: f32, y: f32 }
+    struct NodeSer {
+        id: u32,
+        x: f32,
+        y: f32,
+    }
     #[derive(Deserialize)]
-    struct EdgeSer { id: u32, a: u32, b: u32 }
+    struct EdgeSer {
+        id: u32,
+        a: u32,
+        b: u32,
+    }
     #[derive(Deserialize)]
-    struct Doc { nodes: Vec<NodeSer>, edges: Vec<EdgeSer> }
+    struct Doc {
+        nodes: Vec<NodeSer>,
+        edges: Vec<EdgeSer>,
+    }
     let doc: Doc = serde_wasm_bindgen::from_value(j.clone()).unwrap();
     assert_eq!(doc.nodes.len(), 2);
     assert_eq!(doc.edges.len(), 1);
@@ -117,7 +131,11 @@ fn cubic_handles() {
     // Pick near handle
     let p = g.pick(26.0, 9.0, 10.0);
     #[derive(Deserialize)]
-    struct HPick { kind: String, edge: f64, end: f64 }
+    struct HPick {
+        kind: String,
+        edge: f64,
+        end: f64,
+    }
     let ph: HPick = serde_wasm_bindgen::from_value(p).unwrap();
     assert_eq!(ph.kind, "handle");
     assert_eq!(ph.edge as u32, e);
@@ -158,4 +176,3 @@ fn svg_import_export_basic() {
     assert_eq!(arr.len(), 4);
     assert!(arr.iter().all(|s| s.starts_with("M ")));
 }
-

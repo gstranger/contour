@@ -5,7 +5,9 @@ use serde_json::json;
 fn json_caps_exceeded_nodes() {
     let mut g = Graph::new();
     let too_many = 200_001usize;
-    let nodes: Vec<_> = (0..too_many).map(|i| json!({"id": i, "x": 0.0, "y": 0.0})).collect();
+    let nodes: Vec<_> = (0..too_many)
+        .map(|i| json!({"id": i, "x": 0.0, "y": 0.0}))
+        .collect();
     let v = json!({"version":1, "nodes": nodes, "edges": [], "fills": []});
     let ok = g.from_json_value(v);
     assert!(!ok, "expected failure on nodes cap");

@@ -1887,14 +1887,15 @@
           try {
             if (typeof g.infer_shapes === 'function') {
               const result = g.infer_shapes();
-              const shapeIds = result && result.shapes ? Array.from(result.shapes) : [];
+              // infer_shapes returns a Uint32Array directly, not an object
+              const shapeIds = result ? Array.from(result) : [];
               state.shapes = shapeIds.map(id => ({ id }));
               state.selectedShapes = [];
               updateBooleanButtons();
               updateShapeList();
               updateModeLabel();
               render();
-              console.log('Inferred shapes:', shapeIds.length);
+              console.log('Inferred shapes:', shapeIds.length, shapeIds);
             }
           } catch (e) { console.warn('Infer shapes error:', e); }
         });
@@ -1956,7 +1957,7 @@
           state.selectedShapes = [];
           if (typeof g.infer_shapes === 'function') {
             const inferred = g.infer_shapes();
-            const shapeIds = inferred && inferred.shapes ? Array.from(inferred.shapes) : [];
+            const shapeIds = inferred ? Array.from(inferred) : [];
             state.shapes = shapeIds.map(id => ({ id }));
           }
           updateBooleanButtons();

@@ -1868,6 +1868,7 @@ impl Graph {
     }
 
     /// Helper to find a cycle starting from an edge and returning to start_node.
+    /// Uses DFS with backtracking to handle complex graph topologies.
     fn find_cycle_from(
         &self,
         start_edge: u32,
@@ -1876,44 +1877,57 @@ impl Graph {
         used_edges: &HashSet<u32>,
     ) -> Option<Vec<u32>> {
         let edge = self.edges.get(start_edge as usize)?.as_ref()?;
-        let mut current_node = if edge.a == start_node { edge.b } else { edge.a };
-        let mut path = vec![start_edge];
-        let mut visited_nodes: HashSet<u32> = HashSet::new();
-        visited_nodes.insert(start_node);
+        let first_node = if edge.a == start_node { edge.b } else { edge.a };
 
-        // Walk until we return to start_node or get stuck
-        let max_steps = self.edges.len();
-        for _ in 0..max_steps {
-            if current_node == start_node {
+        // DFS with explicit stack: (current_node, path, visited_nodes, neighbor_index)
+        let mut stack: Vec<(u32, Vec<u32>, HashSet<u32>, usize)> = Vec::new();
+
+        let mut initial_visited = HashSet::new();
+        initial_visited.insert(start_node);
+        stack.push((first_node, vec![start_edge], initial_visited, 0));
+
+        let max_iterations = self.edges.len() * self.edges.len();
+        let mut iterations = 0;
+
+        while let Some((current_node, path, visited, neighbor_idx)) = stack.pop() {
+            iterations += 1;
+            if iterations > max_iterations {
+                break;
+            }
+
+            // Check if we completed the cycle
+            if current_node == start_node && path.len() > 1 {
                 return Some(path);
             }
 
-            if visited_nodes.contains(&current_node) {
-                // Hit a cycle that doesn't include start - give up
-                return None;
+            // Skip if we've visited this node already in this path
+            if visited.contains(&current_node) {
+                continue;
             }
-            visited_nodes.insert(current_node);
 
-            // Find next edge
-            let neighbors = adj.get(&current_node)?;
-            let mut next_edge = None;
-            let mut next_node = None;
+            let neighbors = match adj.get(&current_node) {
+                Some(n) => n,
+                None => continue,
+            };
 
-            for &(eid, other) in neighbors {
+            // Find next unvisited edges from this node
+            for i in neighbor_idx..neighbors.len() {
+                let (eid, other) = neighbors[i];
                 if !path.contains(&eid) && !used_edges.contains(&eid) {
-                    next_edge = Some(eid);
-                    next_node = Some(other);
+                    // Push current state back with incremented index for backtracking
+                    stack.push((current_node, path.clone(), visited.clone(), i + 1));
+
+                    // Push new state
+                    let mut new_path = path.clone();
+                    new_path.push(eid);
+                    let mut new_visited = visited.clone();
+                    new_visited.insert(current_node);
+                    stack.push((other, new_path, new_visited, 0));
                     break;
                 }
             }
 
-            match (next_edge, next_node) {
-                (Some(eid), Some(node)) => {
-                    path.push(eid);
-                    current_node = node;
-                }
-                _ => return None,
-            }
+            // If no more neighbors to try, this branch is exhausted (backtrack)
         }
 
         None

@@ -1889,7 +1889,7 @@ impl Graph {
         let max_iterations = self.edges.len() * self.edges.len();
         let mut iterations = 0;
 
-        while let Some((current_node, path, visited, neighbor_idx)) = stack.pop() {
+        while let Some((current_node, path, mut visited, neighbor_idx)) = stack.pop() {
             iterations += 1;
             if iterations > max_iterations {
                 break;

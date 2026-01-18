@@ -1229,6 +1229,841 @@ impl Graph {
             }
         }
     }
+
+    // ========== Text Management ==========
+
+    /// Add a simple text label at the specified position
+    pub fn add_text(&mut self, content: &str, x: f32, y: f32) -> u32 {
+        self.inner.add_text(content, x, y)
+    }
+
+    pub fn add_text_res(&mut self, content: &str, x: f32, y: f32) -> JsValue {
+        if !x.is_finite() {
+            return error::non_finite("x");
+        }
+        if !y.is_finite() {
+            return error::non_finite("y");
+        }
+        let id = self.inner.add_text(content, x, y);
+        error::ok(JsValue::from_f64(id as f64))
+    }
+
+    /// Add a text box with wrapping
+    pub fn add_text_box(&mut self, content: &str, x: f32, y: f32, width: f32, height: f32) -> u32 {
+        self.inner.add_text_box(content, x, y, width, height)
+    }
+
+    pub fn add_text_box_res(&mut self, content: &str, x: f32, y: f32, width: f32, height: f32) -> JsValue {
+        for (n, v) in [("x", x), ("y", y), ("width", width), ("height", height)] {
+            if !v.is_finite() {
+                return error::non_finite(n);
+            }
+        }
+        if width <= 0.0 {
+            return error::out_of_range("width", 0.0, f32::INFINITY, width);
+        }
+        if height <= 0.0 {
+            return error::out_of_range("height", 0.0, f32::INFINITY, height);
+        }
+        let id = self.inner.add_text_box(content, x, y, width, height);
+        error::ok(JsValue::from_f64(id as f64))
+    }
+
+    /// Add text on a path defined by edge IDs
+    pub fn add_text_on_path(&mut self, content: &str, edge_ids: &Uint32Array) -> u32 {
+        let len = edge_ids.length() as usize;
+        let mut ids = vec![0u32; len];
+        edge_ids.copy_to(&mut ids);
+        self.inner.add_text_on_path(content, ids)
+    }
+
+    pub fn add_text_on_path_res(&mut self, content: &str, edge_ids: &Uint32Array) -> JsValue {
+        let len = edge_ids.length() as usize;
+        let mut ids = vec![0u32; len];
+        edge_ids.copy_to(&mut ids);
+        // Validate edge IDs
+        for &id in &ids {
+            if !edge_exists(&self.inner, id) {
+                return error::invalid_id("edge", id);
+            }
+        }
+        let text_id = self.inner.add_text_on_path(content, ids);
+        error::ok(JsValue::from_f64(text_id as f64))
+    }
+
+    /// Remove a text element
+    pub fn remove_text(&mut self, id: u32) -> bool {
+        self.inner.remove_text(id)
+    }
+
+    pub fn remove_text_res(&mut self, id: u32) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        error::ok(JsValue::from_bool(self.inner.remove_text(id)))
+    }
+
+    /// Get all text IDs
+    pub fn get_text_ids(&self) -> Uint32Array {
+        let ids = self.inner.get_text_ids();
+        crate::interop::arr_u32(&ids)
+    }
+
+    /// Get text element count
+    pub fn text_count(&self) -> u32 {
+        self.inner.text_count()
+    }
+
+    /// Get text element by ID (returns full JSON object)
+    pub fn get_text(&self, id: u32) -> JsValue {
+        match self.inner.get_text(id) {
+            Some(text) => serde_wasm_bindgen::to_value(text).unwrap_or(JsValue::NULL),
+            None => JsValue::NULL,
+        }
+    }
+
+    pub fn get_text_res(&self, id: u32) -> JsValue {
+        match self.inner.get_text(id) {
+            Some(text) => error::ok(serde_wasm_bindgen::to_value(text).unwrap_or(JsValue::NULL)),
+            None => error::invalid_id("text", id),
+        }
+    }
+
+    /// Get all text elements as array of JSON objects
+    pub fn get_all_texts(&self) -> JsValue {
+        let ids = self.inner.get_text_ids();
+        let texts: Vec<_> = ids
+            .iter()
+            .filter_map(|&id| self.inner.get_text(id))
+            .collect();
+        serde_wasm_bindgen::to_value(&texts).unwrap_or(JsValue::NULL)
+    }
+
+    /// Set text content
+    pub fn set_text_content(&mut self, id: u32, content: &str) -> bool {
+        self.inner.set_text_content(id, content)
+    }
+
+    pub fn set_text_content_res(&mut self, id: u32, content: &str) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        error::ok(JsValue::from_bool(self.inner.set_text_content(id, content)))
+    }
+
+    /// Set text position
+    pub fn set_text_position(&mut self, id: u32, x: f32, y: f32) -> bool {
+        self.inner.set_text_position(id, x, y)
+    }
+
+    pub fn set_text_position_res(&mut self, id: u32, x: f32, y: f32) -> JsValue {
+        if !x.is_finite() {
+            return error::non_finite("x");
+        }
+        if !y.is_finite() {
+            return error::non_finite("y");
+        }
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        error::ok(JsValue::from_bool(self.inner.set_text_position(id, x, y)))
+    }
+
+    /// Set text rotation (in radians)
+    pub fn set_text_rotation(&mut self, id: u32, radians: f32) -> bool {
+        self.inner.set_text_rotation(id, radians)
+    }
+
+    pub fn set_text_rotation_res(&mut self, id: u32, radians: f32) -> JsValue {
+        if !radians.is_finite() {
+            return error::non_finite("radians");
+        }
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        error::ok(JsValue::from_bool(self.inner.set_text_rotation(id, radians)))
+    }
+
+    /// Set text alignment (0 = Left, 1 = Center, 2 = Right)
+    pub fn set_text_align(&mut self, id: u32, align: u8) -> bool {
+        let align = match align {
+            0 => contour::model::TextAlign::Left,
+            1 => contour::model::TextAlign::Center,
+            2 => contour::model::TextAlign::Right,
+            _ => return false,
+        };
+        self.inner.set_text_align(id, align)
+    }
+
+    pub fn set_text_align_res(&mut self, id: u32, align: u8) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        if align > 2 {
+            return error::err("invalid_align", "align must be 0, 1, or 2", None);
+        }
+        let text_align = match align {
+            0 => contour::model::TextAlign::Left,
+            1 => contour::model::TextAlign::Center,
+            _ => contour::model::TextAlign::Right,
+        };
+        error::ok(JsValue::from_bool(self.inner.set_text_align(id, text_align)))
+    }
+
+    /// Set font family and size
+    pub fn set_text_font(&mut self, id: u32, font_family: &str, font_size: f32) -> bool {
+        self.inner.set_text_font(id, font_family, font_size)
+    }
+
+    pub fn set_text_font_res(&mut self, id: u32, font_family: &str, font_size: f32) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        if !font_size.is_finite() {
+            return error::non_finite("font_size");
+        }
+        if font_size <= 0.0 {
+            return error::out_of_range("font_size", 0.0, f32::INFINITY, font_size);
+        }
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_font(id, font_family, font_size),
+        ))
+    }
+
+    /// Set font weight (100-900)
+    pub fn set_text_font_weight(&mut self, id: u32, weight: u16) -> bool {
+        self.inner.set_text_font_weight(id, weight)
+    }
+
+    pub fn set_text_font_weight_res(&mut self, id: u32, weight: u16) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        if weight < 100 || weight > 900 {
+            return error::err("invalid_weight", "weight must be 100-900", None);
+        }
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_font_weight(id, weight),
+        ))
+    }
+
+    /// Set font style (0 = Normal, 1 = Italic, 2 = Oblique)
+    pub fn set_text_font_style(&mut self, id: u32, style: u8) -> bool {
+        let font_style = match style {
+            0 => contour::model::FontStyle::Normal,
+            1 => contour::model::FontStyle::Italic,
+            2 => contour::model::FontStyle::Oblique,
+            _ => return false,
+        };
+        self.inner.set_text_font_style(id, font_style)
+    }
+
+    pub fn set_text_font_style_res(&mut self, id: u32, style: u8) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        if style > 2 {
+            return error::err("invalid_style", "style must be 0, 1, or 2", None);
+        }
+        let font_style = match style {
+            0 => contour::model::FontStyle::Normal,
+            1 => contour::model::FontStyle::Italic,
+            _ => contour::model::FontStyle::Oblique,
+        };
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_font_style(id, font_style),
+        ))
+    }
+
+    /// Set text fill color
+    pub fn set_text_fill_color(&mut self, id: u32, r: u8, g: u8, b: u8, a: u8) -> bool {
+        self.inner.set_text_fill_color(id, r, g, b, a)
+    }
+
+    pub fn set_text_fill_color_res(&mut self, id: u32, r: u8, g: u8, b: u8, a: u8) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_fill_color(id, r, g, b, a),
+        ))
+    }
+
+    /// Clear text fill color (make transparent)
+    pub fn clear_text_fill_color(&mut self, id: u32) -> bool {
+        self.inner.clear_text_fill_color(id)
+    }
+
+    /// Set text stroke color
+    pub fn set_text_stroke_color(&mut self, id: u32, r: u8, g: u8, b: u8, a: u8) -> bool {
+        self.inner.set_text_stroke_color(id, r, g, b, a)
+    }
+
+    pub fn set_text_stroke_color_res(&mut self, id: u32, r: u8, g: u8, b: u8, a: u8) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_stroke_color(id, r, g, b, a),
+        ))
+    }
+
+    /// Set text stroke width
+    pub fn set_text_stroke_width(&mut self, id: u32, width: f32) -> bool {
+        self.inner.set_text_stroke_width(id, width)
+    }
+
+    pub fn set_text_stroke_width_res(&mut self, id: u32, width: f32) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        if !width.is_finite() {
+            return error::non_finite("width");
+        }
+        if width < 0.0 {
+            return error::out_of_range("width", 0.0, f32::INFINITY, width);
+        }
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_stroke_width(id, width),
+        ))
+    }
+
+    /// Set letter spacing (in em units)
+    pub fn set_text_letter_spacing(&mut self, id: u32, spacing: f32) -> bool {
+        self.inner.set_text_letter_spacing(id, spacing)
+    }
+
+    pub fn set_text_letter_spacing_res(&mut self, id: u32, spacing: f32) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        if !spacing.is_finite() {
+            return error::non_finite("spacing");
+        }
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_letter_spacing(id, spacing),
+        ))
+    }
+
+    /// Set line height multiplier
+    pub fn set_text_line_height(&mut self, id: u32, line_height: f32) -> bool {
+        self.inner.set_text_line_height(id, line_height)
+    }
+
+    pub fn set_text_line_height_res(&mut self, id: u32, line_height: f32) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        if !line_height.is_finite() {
+            return error::non_finite("line_height");
+        }
+        if line_height < 0.1 {
+            return error::out_of_range("line_height", 0.1, f32::INFINITY, line_height);
+        }
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_line_height(id, line_height),
+        ))
+    }
+
+    /// Convert text to a text box
+    pub fn convert_text_to_box(&mut self, id: u32, width: f32, height: f32) -> bool {
+        self.inner.convert_text_to_box(id, width, height)
+    }
+
+    pub fn convert_text_to_box_res(&mut self, id: u32, width: f32, height: f32) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        if !width.is_finite() || !height.is_finite() {
+            return error::non_finite("dimensions");
+        }
+        if width <= 0.0 || height <= 0.0 {
+            return error::err("invalid_dimensions", "width and height must be positive", None);
+        }
+        error::ok(JsValue::from_bool(
+            self.inner.convert_text_to_box(id, width, height),
+        ))
+    }
+
+    /// Convert text to text on path
+    pub fn convert_text_to_on_path(&mut self, id: u32, edge_ids: &Uint32Array, start_offset: f32) -> bool {
+        let len = edge_ids.length() as usize;
+        let mut ids = vec![0u32; len];
+        edge_ids.copy_to(&mut ids);
+        self.inner.convert_text_to_on_path(id, ids, start_offset)
+    }
+
+    pub fn convert_text_to_on_path_res(&mut self, id: u32, edge_ids: &Uint32Array, start_offset: f32) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        let len = edge_ids.length() as usize;
+        let mut ids = vec![0u32; len];
+        edge_ids.copy_to(&mut ids);
+        for &eid in &ids {
+            if !edge_exists(&self.inner, eid) {
+                return error::invalid_id("edge", eid);
+            }
+        }
+        if !start_offset.is_finite() {
+            return error::non_finite("start_offset");
+        }
+        error::ok(JsValue::from_bool(
+            self.inner.convert_text_to_on_path(id, ids, start_offset),
+        ))
+    }
+
+    /// Convert text back to simple label
+    pub fn convert_text_to_label(&mut self, id: u32) -> bool {
+        self.inner.convert_text_to_label(id)
+    }
+
+    pub fn convert_text_to_label_res(&mut self, id: u32) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        error::ok(JsValue::from_bool(self.inner.convert_text_to_label(id)))
+    }
+
+    /// Set text box size (only for text box type)
+    pub fn set_text_box_size(&mut self, id: u32, width: f32, height: f32) -> bool {
+        self.inner.set_text_box_size(id, width, height)
+    }
+
+    pub fn set_text_box_size_res(&mut self, id: u32, width: f32, height: f32) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        if !width.is_finite() || !height.is_finite() {
+            return error::non_finite("dimensions");
+        }
+        if width <= 0.0 || height <= 0.0 {
+            return error::err("invalid_dimensions", "width and height must be positive", None);
+        }
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_box_size(id, width, height),
+        ))
+    }
+
+    /// Set text box vertical alignment (0 = Top, 1 = Middle, 2 = Bottom)
+    pub fn set_text_box_vertical_align(&mut self, id: u32, align: u8) -> bool {
+        let valign = match align {
+            0 => contour::model::VerticalAlign::Top,
+            1 => contour::model::VerticalAlign::Middle,
+            2 => contour::model::VerticalAlign::Bottom,
+            _ => return false,
+        };
+        self.inner.set_text_box_vertical_align(id, valign)
+    }
+
+    pub fn set_text_box_vertical_align_res(&mut self, id: u32, align: u8) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        if align > 2 {
+            return error::err("invalid_align", "align must be 0, 1, or 2", None);
+        }
+        let valign = match align {
+            0 => contour::model::VerticalAlign::Top,
+            1 => contour::model::VerticalAlign::Middle,
+            _ => contour::model::VerticalAlign::Bottom,
+        };
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_box_vertical_align(id, valign),
+        ))
+    }
+
+    /// Set text box overflow behavior (0 = Clip, 1 = Ellipsis, 2 = Visible)
+    pub fn set_text_box_overflow(&mut self, id: u32, overflow: u8) -> bool {
+        let ovf = match overflow {
+            0 => contour::model::TextOverflow::Clip,
+            1 => contour::model::TextOverflow::Ellipsis,
+            2 => contour::model::TextOverflow::Visible,
+            _ => return false,
+        };
+        self.inner.set_text_box_overflow(id, ovf)
+    }
+
+    pub fn set_text_box_overflow_res(&mut self, id: u32, overflow: u8) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        if overflow > 2 {
+            return error::err("invalid_overflow", "overflow must be 0, 1, or 2", None);
+        }
+        let ovf = match overflow {
+            0 => contour::model::TextOverflow::Clip,
+            1 => contour::model::TextOverflow::Ellipsis,
+            _ => contour::model::TextOverflow::Visible,
+        };
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_box_overflow(id, ovf),
+        ))
+    }
+
+    /// Set text on path start offset (0.0 to 1.0)
+    pub fn set_text_path_offset(&mut self, id: u32, offset: f32) -> bool {
+        self.inner.set_text_path_offset(id, offset)
+    }
+
+    pub fn set_text_path_offset_res(&mut self, id: u32, offset: f32) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        if !offset.is_finite() {
+            return error::non_finite("offset");
+        }
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_path_offset(id, offset),
+        ))
+    }
+
+    /// Set the edges for text on path
+    pub fn set_text_path_edges(&mut self, id: u32, edge_ids: &Uint32Array) -> bool {
+        let len = edge_ids.length() as usize;
+        let mut ids = vec![0u32; len];
+        edge_ids.copy_to(&mut ids);
+        self.inner.set_text_path_edges(id, ids)
+    }
+
+    pub fn set_text_path_edges_res(&mut self, id: u32, edge_ids: &Uint32Array) -> JsValue {
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        let len = edge_ids.length() as usize;
+        let mut ids = vec![0u32; len];
+        edge_ids.copy_to(&mut ids);
+        for &eid in &ids {
+            if !edge_exists(&self.inner, eid) {
+                return error::invalid_id("edge", eid);
+            }
+        }
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_path_edges(id, ids),
+        ))
+    }
+
+    /// Convert text to vector outlines using glyph data from JavaScript.
+    ///
+    /// The glyph_data should be an array of objects:
+    /// [{char: "A", advance_width: 500, paths: [{commands: [...]}]}]
+    ///
+    /// Each command can be:
+    /// - {type: "moveTo", x: 0, y: 0}
+    /// - {type: "lineTo", x: 100, y: 100}
+    /// - {type: "quadTo", cx: 50, cy: 50, x: 100, y: 100}
+    /// - {type: "cubicTo", c1x: 25, c1y: 25, c2x: 75, c2y: 75, x: 100, y: 100}
+    /// - {type: "close"}
+    pub fn text_to_outlines(&mut self, text_id: u32, glyph_data: &JsValue) -> JsValue {
+        let glyphs = parse_glyph_data(glyph_data);
+        match self.inner.text_to_outlines(text_id, &glyphs) {
+            Some(result) => serde_wasm_bindgen::to_value(&serde_json::json!({
+                "shapes": result.shapes,
+                "nodes": result.nodes,
+                "edges": result.edges
+            }))
+            .unwrap_or(JsValue::NULL),
+            None => JsValue::NULL,
+        }
+    }
+
+    pub fn text_to_outlines_res(&mut self, text_id: u32, glyph_data: &JsValue) -> JsValue {
+        if self.inner.get_text(text_id).is_none() {
+            return error::invalid_id("text", text_id);
+        }
+        let glyphs = parse_glyph_data(glyph_data);
+        match self.inner.text_to_outlines(text_id, &glyphs) {
+            Some(result) => error::ok(
+                serde_wasm_bindgen::to_value(&serde_json::json!({
+                    "shapes": result.shapes,
+                    "nodes": result.nodes,
+                    "edges": result.edges
+                }))
+                .unwrap_or(JsValue::NULL),
+            ),
+            None => error::err("outline_failed", "failed to convert text to outlines", None),
+        }
+    }
+
+    // ========== Path Operations (for text on path) ==========
+
+    /// Calculate the total length of a path defined by edge IDs.
+    pub fn path_length(&self, edge_ids: &Uint32Array) -> f32 {
+        let len = edge_ids.length() as usize;
+        let mut ids = vec![0u32; len];
+        edge_ids.copy_to(&mut ids);
+        self.inner.path_length(&ids)
+    }
+
+    pub fn path_length_res(&self, edge_ids: &Uint32Array) -> JsValue {
+        let len = edge_ids.length() as usize;
+        let mut ids = vec![0u32; len];
+        edge_ids.copy_to(&mut ids);
+        // Validate edges exist
+        for &id in &ids {
+            if !edge_exists(&self.inner, id) {
+                return error::invalid_id("edge", id);
+            }
+        }
+        error::ok(JsValue::from_f64(self.inner.path_length(&ids) as f64))
+    }
+
+    /// Get a point at a specific distance along a path.
+    /// Returns {x, y, angle} or null if invalid.
+    pub fn point_on_path(&self, edge_ids: &Uint32Array, distance: f32) -> JsValue {
+        let len = edge_ids.length() as usize;
+        let mut ids = vec![0u32; len];
+        edge_ids.copy_to(&mut ids);
+        match self.inner.point_on_path(&ids, distance) {
+            Some(point) => serde_wasm_bindgen::to_value(&serde_json::json!({
+                "x": point.x,
+                "y": point.y,
+                "angle": point.angle
+            }))
+            .unwrap_or(JsValue::NULL),
+            None => JsValue::NULL,
+        }
+    }
+
+    pub fn point_on_path_res(&self, edge_ids: &Uint32Array, distance: f32) -> JsValue {
+        if !distance.is_finite() {
+            return error::non_finite("distance");
+        }
+        let len = edge_ids.length() as usize;
+        let mut ids = vec![0u32; len];
+        edge_ids.copy_to(&mut ids);
+        for &id in &ids {
+            if !edge_exists(&self.inner, id) {
+                return error::invalid_id("edge", id);
+            }
+        }
+        match self.inner.point_on_path(&ids, distance) {
+            Some(point) => error::ok(
+                serde_wasm_bindgen::to_value(&serde_json::json!({
+                    "x": point.x,
+                    "y": point.y,
+                    "angle": point.angle
+                }))
+                .unwrap_or(JsValue::NULL),
+            ),
+            None => error::err("point_not_found", "could not find point on path", None),
+        }
+    }
+
+    /// Sample text positions along a path.
+    /// char_widths is a Float32Array of character widths.
+    /// Returns array of {x, y, angle} for each character.
+    pub fn sample_text_positions(
+        &self,
+        edge_ids: &Uint32Array,
+        char_widths: &Float32Array,
+        start_offset: f32,
+    ) -> JsValue {
+        let edge_len = edge_ids.length() as usize;
+        let mut ids = vec![0u32; edge_len];
+        edge_ids.copy_to(&mut ids);
+
+        let widths_len = char_widths.length() as usize;
+        let mut widths = vec![0.0f32; widths_len];
+        char_widths.copy_to(&mut widths);
+
+        let positions = self.inner.sample_text_positions(&ids, &widths, start_offset);
+        let result: Vec<_> = positions
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "x": p.x,
+                    "y": p.y,
+                    "angle": p.angle
+                })
+            })
+            .collect();
+        serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
+    }
+
+    pub fn sample_text_positions_res(
+        &self,
+        edge_ids: &Uint32Array,
+        char_widths: &Float32Array,
+        start_offset: f32,
+    ) -> JsValue {
+        if !start_offset.is_finite() {
+            return error::non_finite("start_offset");
+        }
+        let edge_len = edge_ids.length() as usize;
+        let mut ids = vec![0u32; edge_len];
+        edge_ids.copy_to(&mut ids);
+        for &id in &ids {
+            if !edge_exists(&self.inner, id) {
+                return error::invalid_id("edge", id);
+            }
+        }
+
+        let widths_len = char_widths.length() as usize;
+        let mut widths = vec![0.0f32; widths_len];
+        char_widths.copy_to(&mut widths);
+        if widths.iter().any(|w| !w.is_finite()) {
+            return error::non_finite("char_widths");
+        }
+
+        let positions = self.inner.sample_text_positions(&ids, &widths, start_offset);
+        let result: Vec<_> = positions
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "x": p.x,
+                    "y": p.y,
+                    "angle": p.angle
+                })
+            })
+            .collect();
+        error::ok(serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL))
+    }
+
+    /// Layout text content into a box with line wrapping.
+    /// char_widths is a Float32Array of character widths from JS font measurement.
+    /// Returns {lines: [{text, x_offset, y_offset, width}], total_height, truncated}
+    pub fn layout_text_box(
+        &self,
+        content: &str,
+        width: f32,
+        height: f32,
+        font_size: f32,
+        line_height: f32,
+        letter_spacing: f32,
+        char_widths: &Float32Array,
+        align: u8,
+        vertical_align: u8,
+    ) -> JsValue {
+        use contour::algorithms::text_layout::layout_text_box;
+        use contour::model::{TextAlign, TextStyle, VerticalAlign, FontStyle};
+
+        let style = TextStyle {
+            font_family: String::new(),
+            font_size,
+            font_weight: 400,
+            font_style: FontStyle::Normal,
+            fill_color: None,
+            stroke_color: None,
+            stroke_width: 0.0,
+            letter_spacing,
+            line_height,
+        };
+
+        let text_align = match align {
+            1 => TextAlign::Center,
+            2 => TextAlign::Right,
+            _ => TextAlign::Left,
+        };
+
+        let vert_align = match vertical_align {
+            1 => VerticalAlign::Middle,
+            2 => VerticalAlign::Bottom,
+            _ => VerticalAlign::Top,
+        };
+
+        let widths_len = char_widths.length() as usize;
+        let mut widths = vec![0.0f32; widths_len];
+        char_widths.copy_to(&mut widths);
+
+        let layout = layout_text_box(content, width, height, &style, &widths, text_align, vert_align);
+
+        let lines: Vec<_> = layout.lines.iter().map(|l| {
+            serde_json::json!({
+                "text": l.text,
+                "x_offset": l.x_offset,
+                "y_offset": l.y_offset,
+                "width": l.width
+            })
+        }).collect();
+
+        serde_wasm_bindgen::to_value(&serde_json::json!({
+            "lines": lines,
+            "total_height": layout.total_height,
+            "truncated": layout.truncated
+        })).unwrap_or(JsValue::NULL)
+    }
+
+    pub fn layout_text_box_res(
+        &self,
+        content: &str,
+        width: f32,
+        height: f32,
+        font_size: f32,
+        line_height: f32,
+        letter_spacing: f32,
+        char_widths: &Float32Array,
+        align: u8,
+        vertical_align: u8,
+    ) -> JsValue {
+        use contour::algorithms::text_layout::layout_text_box;
+        use contour::model::{TextAlign, TextStyle, VerticalAlign, FontStyle};
+
+        if !width.is_finite() {
+            return error::non_finite("width");
+        }
+        if !height.is_finite() {
+            return error::non_finite("height");
+        }
+        if !font_size.is_finite() || font_size <= 0.0 {
+            return error::err("INVALID_FONT_SIZE", "font_size must be positive and finite", None);
+        }
+        if !line_height.is_finite() || line_height <= 0.0 {
+            return error::err("INVALID_LINE_HEIGHT", "line_height must be positive and finite", None);
+        }
+        if !letter_spacing.is_finite() {
+            return error::non_finite("letter_spacing");
+        }
+
+        let style = TextStyle {
+            font_family: String::new(),
+            font_size,
+            font_weight: 400,
+            font_style: FontStyle::Normal,
+            fill_color: None,
+            stroke_color: None,
+            stroke_width: 0.0,
+            letter_spacing,
+            line_height,
+        };
+
+        let text_align = match align {
+            1 => TextAlign::Center,
+            2 => TextAlign::Right,
+            _ => TextAlign::Left,
+        };
+
+        let vert_align = match vertical_align {
+            1 => VerticalAlign::Middle,
+            2 => VerticalAlign::Bottom,
+            _ => VerticalAlign::Top,
+        };
+
+        let widths_len = char_widths.length() as usize;
+        let mut widths = vec![0.0f32; widths_len];
+        char_widths.copy_to(&mut widths);
+
+        if widths.iter().any(|w| !w.is_finite()) {
+            return error::non_finite("char_widths");
+        }
+
+        let layout = layout_text_box(content, width, height, &style, &widths, text_align, vert_align);
+
+        let lines: Vec<_> = layout.lines.iter().map(|l| {
+            serde_json::json!({
+                "text": l.text,
+                "x_offset": l.x_offset,
+                "y_offset": l.y_offset,
+                "width": l.width
+            })
+        }).collect();
+
+        error::ok(serde_wasm_bindgen::to_value(&serde_json::json!({
+            "lines": lines,
+            "total_height": layout.total_height,
+            "truncated": layout.truncated
+        })).unwrap_or(JsValue::NULL))
+    }
 }
 
 fn to_pairs(arr: &Float32Array) -> Vec<(f32, f32)> {
@@ -1306,4 +2141,58 @@ fn parse_spread_method(spread: u8) -> contour::model::SpreadMethod {
         2 => contour::model::SpreadMethod::Repeat,
         _ => contour::model::SpreadMethod::Pad,
     }
+}
+
+/// Parse glyph data from JavaScript for text-to-outlines conversion
+fn parse_glyph_data(data: &JsValue) -> Vec<contour::model::GlyphOutline> {
+    #[derive(serde::Deserialize)]
+    struct GlyphJs {
+        char: Option<String>,
+        advance_width: f32,
+        paths: Vec<PathJs>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PathJs {
+        commands: Vec<CommandJs>,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(tag = "type", rename_all = "camelCase")]
+    enum CommandJs {
+        MoveTo { x: f32, y: f32 },
+        LineTo { x: f32, y: f32 },
+        QuadTo { cx: f32, cy: f32, x: f32, y: f32 },
+        CubicTo { c1x: f32, c1y: f32, c2x: f32, c2y: f32, x: f32, y: f32 },
+        Close,
+    }
+
+    let glyphs: Vec<GlyphJs> = serde_wasm_bindgen::from_value(data.clone()).unwrap_or_default();
+
+    glyphs
+        .into_iter()
+        .map(|g| contour::model::GlyphOutline {
+            char: g.char.and_then(|s| s.chars().next()).unwrap_or('?'),
+            advance_width: g.advance_width,
+            paths: g
+                .paths
+                .into_iter()
+                .map(|p| contour::model::GlyphPath {
+                    commands: p
+                        .commands
+                        .into_iter()
+                        .map(|c| match c {
+                            CommandJs::MoveTo { x, y } => contour::model::PathCommand::MoveTo(x, y),
+                            CommandJs::LineTo { x, y } => contour::model::PathCommand::LineTo(x, y),
+                            CommandJs::QuadTo { cx, cy, x, y } => {
+                                contour::model::PathCommand::QuadTo(cx, cy, x, y)
+                            }
+                            CommandJs::CubicTo { c1x, c1y, c2x, c2y, x, y } => {
+                                contour::model::PathCommand::CubicTo(c1x, c1y, c2x, c2y, x, y)
+                            }
+                            CommandJs::Close => contour::model::PathCommand::Close,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
+        .collect()
 }

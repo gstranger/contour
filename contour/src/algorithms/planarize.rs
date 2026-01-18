@@ -6,6 +6,9 @@ use crate::model::{EdgeKind, Vec2};
 use crate::Graph;
 use std::collections::{HashMap, HashSet};
 
+/// Maximum cells a segment can span in one dimension before we skip grid insertion.
+const MAX_CELL_SPAN: i32 = 256;
+
 #[derive(Debug, Clone)]
 pub struct Planarized {
     pub verts: Vec<(f32, f32)>,
@@ -174,6 +177,10 @@ pub fn planarize_graph(g: &Graph) -> Planarized {
             let ix1 = cell_ix(maxx + ep);
             let iy0 = cell_ix(miny - ep);
             let iy1 = cell_ix(maxy + ep);
+            // Skip grid insertion for segments spanning too many cells
+            if (ix1 - ix0) > MAX_CELL_SPAN || (iy1 - iy0) > MAX_CELL_SPAN {
+                continue;
+            }
             for ix in ix0..=ix1 {
                 for iy in iy0..=iy1 {
                     buckets.entry((ix, iy)).or_default().push(i);

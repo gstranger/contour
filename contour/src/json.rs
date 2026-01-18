@@ -2,8 +2,8 @@ use crate::geometry::limits;
 use crate::layers::LayerSystem;
 use crate::{
     model::{
-        Color, ColorStop, FillState, Gradient, GradientId, GradientUnits, Group, HandleMode,
-        Layer, LayerId, LinearGradient, RadialGradient, SpreadMethod, Vec2,
+        Color, FillState, FontStyle, Gradient, GradientId, Group, HandleMode, Layer, LayerId,
+        TextAlign, TextElement, TextId, TextOverflow, TextStyle, TextType, Vec2, VerticalAlign,
     },
     Graph,
 };
@@ -82,6 +82,7 @@ pub fn to_json_impl(g: &Graph) -> Value {
         layers: Vec<LayerSer>,
         groups: Vec<GroupSer>,
         gradients: Vec<GradientSer>,
+        texts: Vec<TextElement>,
     }
     let mut nodes = Vec::new();
     for (i, n) in g.nodes.iter().enumerate() {
@@ -165,14 +166,21 @@ pub fn to_json_impl(g: &Graph) -> Value {
             gradient: gradient.clone(),
         })
         .collect();
+    // Serialize texts
+    let texts: Vec<TextElement> = g
+        .texts
+        .iter()
+        .filter_map(|t| t.clone())
+        .collect();
     serde_json::to_value(Doc {
-        version: 2,
+        version: 3,
         nodes,
         edges,
         fills,
         layers,
         groups,
         gradients,
+        texts,
     })
     .unwrap()
 }
@@ -249,6 +257,7 @@ pub fn from_json_impl(g: &mut Graph, v: Value) -> bool {
         layers: Option<Vec<LayerDe>>,
         groups: Option<Vec<GroupDe>>,
         gradients: Option<Vec<GradientDe>>,
+        texts: Option<Vec<TextElement>>,
     }
     let parsed: Result<DocDe, _> = serde_json::from_value(v);
     if let Ok(doc) = parsed {
@@ -427,6 +436,19 @@ pub fn from_json_impl(g: &mut Graph, v: Value) -> bool {
             g.next_gradient_id = 0;
         }
 
+        // Load texts if present (v3 format)
+        g.texts.clear();
+        if let Some(texts) = doc.texts {
+            let max_text_id = texts.iter().map(|t| t.id).max().unwrap_or(0);
+            g.texts = vec![None; (max_text_id as usize) + 1];
+            for t in texts {
+                let idx = t.id as usize;
+                if idx < g.texts.len() {
+                    g.texts[idx] = Some(t);
+                }
+            }
+        }
+
         g.geom_ver = g.geom_ver.wrapping_add(1);
         true
     } else {
@@ -507,6 +529,7 @@ pub fn from_json_impl_strict(g: &mut Graph, v: Value) -> Result<bool, (&'static 
         layers: Option<Vec<LayerDe>>,
         groups: Option<Vec<GroupDe>>,
         gradients: Option<Vec<GradientDe>>,
+        texts: Option<Vec<TextElement>>,
     }
     let doc: DocDe = serde_json::from_value(v).map_err(|e| ("json_parse", format!("{}", e)))?;
     if doc.nodes.len() > limits::MAX_NODES {
@@ -690,6 +713,19 @@ pub fn from_json_impl_strict(g: &mut Graph, v: Value) -> Result<bool, (&'static 
         }
     } else {
         g.next_gradient_id = 0;
+    }
+
+    // Load texts if present (v3 format)
+    g.texts.clear();
+    if let Some(texts) = doc.texts {
+        let max_text_id = texts.iter().map(|t| t.id).max().unwrap_or(0);
+        g.texts = vec![None; (max_text_id as usize) + 1];
+        for t in texts {
+            let idx = t.id as usize;
+            if idx < g.texts.len() {
+                g.texts[idx] = Some(t);
+            }
+        }
     }
 
     g.geom_ver = g.geom_ver.wrapping_add(1);

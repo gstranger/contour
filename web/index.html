@@ -1885,16 +1885,22 @@
       if (inferShapesBtn) {
         inferShapesBtn.addEventListener('click', () => {
           try {
+            // First, infer any new shapes from unassigned edges
             if (typeof g.infer_shapes === 'function') {
-              const result = g.infer_shapes();
-              const shapeIds = result && result.shapes ? Array.from(result.shapes) : [];
+              const newShapes = g.infer_shapes();
+              console.log('Newly inferred shapes:', newShapes ? Array.from(newShapes) : []);
+            }
+            // Then get ALL existing shape IDs (including previously created ones)
+            if (typeof g.get_shape_ids === 'function') {
+              const allShapeIds = g.get_shape_ids();
+              const shapeIds = allShapeIds ? Array.from(allShapeIds) : [];
               state.shapes = shapeIds.map(id => ({ id }));
               state.selectedShapes = [];
               updateBooleanButtons();
               updateShapeList();
               updateModeLabel();
               render();
-              console.log('Inferred shapes:', shapeIds.length);
+              console.log('Total shapes:', shapeIds.length, shapeIds);
             }
           } catch (e) { console.warn('Infer shapes error:', e); }
         });
@@ -1952,11 +1958,14 @@
             case 'xor': result = g.boolean_xor(a, b); break;
           }
           console.log(`Boolean ${opName} result:`, result);
-          // Re-infer shapes after operation
+          // Re-infer shapes after operation, then get all shapes
           state.selectedShapes = [];
           if (typeof g.infer_shapes === 'function') {
-            const inferred = g.infer_shapes();
-            const shapeIds = inferred && inferred.shapes ? Array.from(inferred.shapes) : [];
+            g.infer_shapes(); // Create any new shapes from unassigned edges
+          }
+          if (typeof g.get_shape_ids === 'function') {
+            const allShapeIds = g.get_shape_ids();
+            const shapeIds = allShapeIds ? Array.from(allShapeIds) : [];
             state.shapes = shapeIds.map(id => ({ id }));
           }
           updateBooleanButtons();

@@ -88,6 +88,10 @@ pub fn planarize_graph(g: &Graph) -> Planarized {
 
     if let Some(plan) = plan_opt {
         for (eid, seg_vec) in plan.edge_segments.iter() {
+            // Skip hidden edges (from invisible layers/groups)
+            if !g.layer_system.is_edge_visible(*eid) {
+                continue;
+            }
             for (idx, &(ax, ay, bx, by)) in seg_vec.iter().enumerate() {
                 let global_idx = segs.len();
                 segs.push(Seg {
@@ -108,6 +112,10 @@ pub fn planarize_graph(g: &Graph) -> Planarized {
                 continue;
             }
             let eid_u32 = eid as u32;
+            // Skip hidden edges (from invisible layers/groups)
+            if !g.layer_system.is_edge_visible(eid_u32) {
+                continue;
+            }
             if let Some(pts) = flatten_points_for_edge(g, flatten_cache, eid_u32) {
                 for w in pts.windows(2) {
                     let ax = w[0].x;

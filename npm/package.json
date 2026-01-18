@@ -1,0 +1,37 @@
+{
+  "name": "contour",
+  "version": "0.1.0",
+  "description": "WASM vector network engine for the browser",
+  "type": "module",
+  "module": "./pkg/index.js",
+  "main": "./pkg/index.js",
+  "types": "./pkg/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./pkg/index.js",
+      "types": "./pkg/index.d.ts"
+    },
+    "./simd": {
+      "import": "./pkg/simd/index.js",
+      "types": "./pkg/simd/index.d.ts"
+    },
+    "./threads": {
+      "import": "./pkg/threads/index.js",
+      "types": "./pkg/threads/index.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "pkg",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=16"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/contour"
+  },
+  "license": "MIT"
+}

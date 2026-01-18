@@ -1,0 +1,11 @@
+{
+  "name": "contour-smoke",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "dependencies": {
+    "contour": "file:../../npm"
+  }
+}

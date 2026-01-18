@@ -851,8 +851,12 @@ impl Graph {
 
     pub(crate) fn find_simple_cycles(&self) -> Vec<Region> {
         let mut adj: HashMap<u32, Vec<u32>> = HashMap::new();
-        for e in self.edges.iter() {
+        for (eid, e) in self.edges.iter().enumerate() {
             if let Some(e) = e {
+                // Skip hidden edges (from invisible layers/groups)
+                if !self.layer_system.is_edge_visible(eid as u32) {
+                    continue;
+                }
                 if self.nodes.get(e.a as usize).and_then(|n| *n).is_none() {
                     continue;
                 }

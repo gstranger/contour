@@ -16,6 +16,10 @@ fn cell_ix(cell: f32, x: f32) -> i32 {
     (x / cell).floor() as i32
 }
 
+/// Maximum cells a segment can span in one dimension before we skip grid insertion.
+/// This prevents memory explosion from segments with extreme coordinate ranges.
+const MAX_CELL_SPAN: i32 = 256;
+
 fn choose_cell_size(flatten_tol: f32) -> f32 {
     (flatten_tol * 8.0).clamp(4.0, 64.0)
 }
@@ -89,6 +93,10 @@ pub fn build_from_graph(g: &Graph) -> IncrPlan {
                 let ix1 = cell_ix(cell, maxx);
                 let iy0 = cell_ix(cell, miny);
                 let iy1 = cell_ix(cell, maxy);
+                // Skip grid insertion for segments spanning too many cells
+                if (ix1 - ix0) > MAX_CELL_SPAN || (iy1 - iy0) > MAX_CELL_SPAN {
+                    continue;
+                }
                 for ix in ix0..=ix1 {
                     for iy in iy0..=iy1 {
                         seg_cells.entry((ix, iy)).or_default().push((eid, idx));
@@ -143,6 +151,10 @@ pub fn update_for_dirty(g: &Graph, plan: &mut IncrPlan, edge_ids: &[u32]) {
                 let ix1 = cell_ix(plan.cell, maxx);
                 let iy0 = cell_ix(plan.cell, miny);
                 let iy1 = cell_ix(plan.cell, maxy);
+                // Skip grid insertion for segments spanning too many cells
+                if (ix1 - ix0) > MAX_CELL_SPAN || (iy1 - iy0) > MAX_CELL_SPAN {
+                    continue;
+                }
                 for ix in ix0..=ix1 {
                     for iy in iy0..=iy1 {
                         plan.seg_cells.entry((ix, iy)).or_default().push((eid, idx));

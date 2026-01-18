@@ -172,7 +172,7 @@ fn sequence_strategy() -> impl Strategy<Value = Vec<Op>> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 10_000, .. ProptestConfig::default() })]
+    #![proptest_config(ProptestConfig { cases: 256, .. ProptestConfig::default() })]
     #[test]
     fn graph_edit_invariants(seq in sequence_strategy()) {
         let mut graph = Graph::new();

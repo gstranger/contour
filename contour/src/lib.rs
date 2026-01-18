@@ -6,6 +6,7 @@ pub mod geometry {
     pub mod intersect;
     pub mod limits;
     pub mod math;
+    pub mod path_length;
     pub mod tolerance;
 }
 pub mod algorithms {
@@ -15,6 +16,8 @@ pub mod algorithms {
     pub mod planarize;
     pub mod planarize_subset;
     pub mod regions;
+    pub mod text_layout;
+    pub mod text_outline;
     pub mod winding;
 }
 mod json;
@@ -22,8 +25,10 @@ mod svg;
 
 use layers::LayerSystem;
 use model::{
-    Color, ColorStop, Edge, EdgeKind, FillRule, FillState, Gradient, GradientId, GradientUnits,
-    HandleMode, LayerId, LinearGradient, Node, Paint, RadialGradient, Shape, SpreadMethod, Vec2,
+    Color, ColorStop, Edge, EdgeKind, FillRule, FillState, FontStyle, Gradient, GradientId,
+    GradientUnits, HandleMode, LayerId, LinearGradient, Node, Paint, RadialGradient, Shape,
+    SpreadMethod, TextAlign, TextElement, TextId, TextStyle, TextType, Vec2, VerticalAlign,
+    TextOverflow,
 };
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -62,6 +67,7 @@ pub struct Graph {
     pub(crate) nodes: Vec<Option<Node>>,       // id is index
     pub(crate) edges: Vec<Option<Edge>>,       // id is index
     pub(crate) shapes: Vec<Option<Shape>>,     // id is index
+    pub(crate) texts: Vec<Option<TextElement>>, // id is index
     pub(crate) fills: HashMap<u32, FillState>, // region key -> fill
     pub(crate) layer_system: LayerSystem,      // layer/group hierarchy
     pub(crate) gradients: HashMap<GradientId, Gradient>, // gradient definitions
@@ -197,6 +203,7 @@ impl Graph {
             nodes: Vec::new(),
             edges: Vec::new(),
             shapes: Vec::new(),
+            texts: Vec::new(),
             fills: HashMap::new(),
             layer_system: LayerSystem::new(),
             gradients: HashMap::new(),
@@ -545,6 +552,7 @@ impl Graph {
         self.nodes.clear();
         self.edges.clear();
         self.shapes.clear();
+        self.texts.clear();
         self.fills.clear();
         self.prev_regions.clear();
         self.region_cache.borrow_mut().take();
@@ -1909,5 +1917,318 @@ impl Graph {
         }
 
         None
+    }
+}
+
+// Text management
+impl Graph {
+    /// Add a simple text label at the specified position.
+    /// Returns the text ID.
+    pub fn add_text(&mut self, content: &str, x: f32, y: f32) -> TextId {
+        let id = self.texts.len() as TextId;
+        self.texts.push(Some(TextElement::new_label(id, content.to_string(), x, y)));
+        id
+    }
+
+    /// Add a text box with wrapping at the specified position.
+    /// Returns the text ID.
+    pub fn add_text_box(&mut self, content: &str, x: f32, y: f32, width: f32, height: f32) -> TextId {
+        let id = self.texts.len() as TextId;
+        self.texts.push(Some(TextElement::new_box(id, content.to_string(), x, y, width, height)));
+        id
+    }
+
+    /// Add text on a path defined by edge IDs.
+    /// Returns the text ID.
+    pub fn add_text_on_path(&mut self, content: &str, edge_ids: Vec<u32>) -> TextId {
+        let id = self.texts.len() as TextId;
+        self.texts.push(Some(TextElement::new_on_path(id, content.to_string(), edge_ids)));
+        id
+    }
+
+    /// Remove a text element by ID. Returns true if it existed.
+    pub fn remove_text(&mut self, id: TextId) -> bool {
+        if let Some(slot) = self.texts.get_mut(id as usize) {
+            if slot.is_some() {
+                *slot = None;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get a reference to a text element by ID.
+    pub fn get_text(&self, id: TextId) -> Option<&TextElement> {
+        self.texts.get(id as usize).and_then(|t| t.as_ref())
+    }
+
+    /// Get a mutable reference to a text element by ID.
+    pub fn get_text_mut(&mut self, id: TextId) -> Option<&mut TextElement> {
+        self.texts.get_mut(id as usize).and_then(|t| t.as_mut())
+    }
+
+    /// Get all text IDs.
+    pub fn get_text_ids(&self) -> Vec<TextId> {
+        self.texts
+            .iter()
+            .enumerate()
+            .filter_map(|(i, t)| t.as_ref().map(|_| i as TextId))
+            .collect()
+    }
+
+    /// Count the number of text elements.
+    pub fn text_count(&self) -> u32 {
+        self.texts.iter().filter(|t| t.is_some()).count() as u32
+    }
+
+    /// Set the content of a text element.
+    pub fn set_text_content(&mut self, id: TextId, content: &str) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.content = content.to_string();
+            return true;
+        }
+        false
+    }
+
+    /// Set the position of a text element.
+    pub fn set_text_position(&mut self, id: TextId, x: f32, y: f32) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.position = Vec2 { x, y };
+            return true;
+        }
+        false
+    }
+
+    /// Set the rotation of a text element (in radians).
+    pub fn set_text_rotation(&mut self, id: TextId, radians: f32) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.rotation = radians;
+            return true;
+        }
+        false
+    }
+
+    /// Set the text alignment.
+    pub fn set_text_align(&mut self, id: TextId, align: TextAlign) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.align = align;
+            return true;
+        }
+        false
+    }
+
+    /// Set the complete style of a text element.
+    pub fn set_text_style(&mut self, id: TextId, style: TextStyle) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.style = style;
+            return true;
+        }
+        false
+    }
+
+    /// Set individual font properties.
+    pub fn set_text_font(&mut self, id: TextId, font_family: &str, font_size: f32) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.style.font_family = font_family.to_string();
+            text.style.font_size = font_size;
+            return true;
+        }
+        false
+    }
+
+    /// Set font weight (100-900).
+    pub fn set_text_font_weight(&mut self, id: TextId, weight: u16) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.style.font_weight = weight.clamp(100, 900);
+            return true;
+        }
+        false
+    }
+
+    /// Set font style (normal, italic, oblique).
+    pub fn set_text_font_style(&mut self, id: TextId, style: FontStyle) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.style.font_style = style;
+            return true;
+        }
+        false
+    }
+
+    /// Set the fill color of text.
+    pub fn set_text_fill_color(&mut self, id: TextId, r: u8, g: u8, b: u8, a: u8) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.style.fill_color = Some(Color { r, g, b, a });
+            return true;
+        }
+        false
+    }
+
+    /// Clear the fill color (make text transparent fill).
+    pub fn clear_text_fill_color(&mut self, id: TextId) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.style.fill_color = None;
+            return true;
+        }
+        false
+    }
+
+    /// Set the stroke color of text.
+    pub fn set_text_stroke_color(&mut self, id: TextId, r: u8, g: u8, b: u8, a: u8) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.style.stroke_color = Some(Color { r, g, b, a });
+            return true;
+        }
+        false
+    }
+
+    /// Set the stroke width of text.
+    pub fn set_text_stroke_width(&mut self, id: TextId, width: f32) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.style.stroke_width = width.max(0.0);
+            return true;
+        }
+        false
+    }
+
+    /// Set letter spacing (in em units).
+    pub fn set_text_letter_spacing(&mut self, id: TextId, spacing: f32) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.style.letter_spacing = spacing;
+            return true;
+        }
+        false
+    }
+
+    /// Set line height multiplier.
+    pub fn set_text_line_height(&mut self, id: TextId, line_height: f32) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.style.line_height = line_height.max(0.1);
+            return true;
+        }
+        false
+    }
+
+    /// Convert a text label to a text box.
+    pub fn convert_text_to_box(&mut self, id: TextId, width: f32, height: f32) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.text_type = TextType::Box {
+                width,
+                height,
+                vertical_align: VerticalAlign::Top,
+                overflow: TextOverflow::Clip,
+            };
+            return true;
+        }
+        false
+    }
+
+    /// Convert a text element to text on path.
+    pub fn convert_text_to_on_path(&mut self, id: TextId, edge_ids: Vec<u32>, start_offset: f32) -> bool {
+        // Validate edge IDs
+        for &eid in &edge_ids {
+            if self.edges.get(eid as usize).and_then(|e| e.as_ref()).is_none() {
+                return false;
+            }
+        }
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.text_type = TextType::OnPath {
+                edge_ids,
+                start_offset: start_offset.clamp(0.0, 1.0),
+            };
+            return true;
+        }
+        false
+    }
+
+    /// Convert a text element back to a simple label.
+    pub fn convert_text_to_label(&mut self, id: TextId) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            text.text_type = TextType::Label;
+            return true;
+        }
+        false
+    }
+
+    /// Set text box dimensions (only for text box type).
+    pub fn set_text_box_size(&mut self, id: TextId, width: f32, height: f32) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            if let TextType::Box { vertical_align, overflow, .. } = text.text_type {
+                text.text_type = TextType::Box {
+                    width,
+                    height,
+                    vertical_align,
+                    overflow,
+                };
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Set text box vertical alignment.
+    pub fn set_text_box_vertical_align(&mut self, id: TextId, align: VerticalAlign) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            if let TextType::Box { width, height, overflow, .. } = text.text_type {
+                text.text_type = TextType::Box {
+                    width,
+                    height,
+                    vertical_align: align,
+                    overflow,
+                };
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Set text box overflow behavior.
+    pub fn set_text_box_overflow(&mut self, id: TextId, overflow: TextOverflow) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            if let TextType::Box { width, height, vertical_align, .. } = text.text_type {
+                text.text_type = TextType::Box {
+                    width,
+                    height,
+                    vertical_align,
+                    overflow,
+                };
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Set the start offset for text on path (0.0 to 1.0).
+    pub fn set_text_path_offset(&mut self, id: TextId, offset: f32) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            if let TextType::OnPath { edge_ids, .. } = &text.text_type {
+                let edge_ids = edge_ids.clone();
+                text.text_type = TextType::OnPath {
+                    edge_ids,
+                    start_offset: offset.clamp(0.0, 1.0),
+                };
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Update the path for text on path.
+    pub fn set_text_path_edges(&mut self, id: TextId, edge_ids: Vec<u32>) -> bool {
+        // Validate edge IDs
+        for &eid in &edge_ids {
+            if self.edges.get(eid as usize).and_then(|e| e.as_ref()).is_none() {
+                return false;
+            }
+        }
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            if let TextType::OnPath { start_offset, .. } = text.text_type {
+                text.text_type = TextType::OnPath {
+                    edge_ids,
+                    start_offset,
+                };
+                return true;
+            }
+        }
+        false
     }
 }

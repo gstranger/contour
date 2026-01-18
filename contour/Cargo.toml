@@ -14,6 +14,8 @@ serde_json = "1"
 long-persist = []
 region_prof = []
 bench_regions = []
+simd = []
+threads = []
 
 [dev-dependencies]
 proptest = "1"

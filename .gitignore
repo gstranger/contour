@@ -4,6 +4,9 @@
 
 # wasm-pack
 /pkg/
+/npm/pkg/default/
+/npm/pkg/simd/
+/npm/pkg/threads/
 /wasm-pack.log
 
 # Node / bundlers
@@ -40,4 +43,3 @@ Thumbs.db
 # Coverage
 coverage/
 *.lcov
-

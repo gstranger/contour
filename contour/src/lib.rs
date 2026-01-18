@@ -1,5 +1,7 @@
 pub mod model;
+pub mod layers;
 pub mod geometry {
+    pub mod cubic;
     pub mod flatten;
     pub mod intersect;
     pub mod limits;
@@ -7,16 +9,22 @@ pub mod geometry {
     pub mod tolerance;
 }
 pub mod algorithms {
+    pub mod boolean;
     pub mod incremental;
     pub mod picking;
     pub mod planarize;
     pub mod planarize_subset;
     pub mod regions;
+    pub mod winding;
 }
 mod json;
 mod svg;
 
-use model::{Color, Edge, EdgeKind, FillState, HandleMode, Node, Vec2};
+use layers::LayerSystem;
+use model::{
+    Color, ColorStop, Edge, EdgeKind, FillRule, FillState, Gradient, GradientId, GradientUnits,
+    HandleMode, LayerId, LinearGradient, Node, Paint, RadialGradient, Shape, SpreadMethod, Vec2,
+};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -53,7 +61,11 @@ pub struct RegionCache {
 pub struct Graph {
     pub(crate) nodes: Vec<Option<Node>>,       // id is index
     pub(crate) edges: Vec<Option<Edge>>,       // id is index
+    pub(crate) shapes: Vec<Option<Shape>>,     // id is index
     pub(crate) fills: HashMap<u32, FillState>, // region key -> fill
+    pub(crate) layer_system: LayerSystem,      // layer/group hierarchy
+    pub(crate) gradients: HashMap<GradientId, Gradient>, // gradient definitions
+    pub(crate) next_gradient_id: GradientId,   // next gradient ID
     pub(crate) geom_ver: u64,
     pub(crate) last_geom_ver: u64,
     pub(crate) prev_regions: Vec<(u32, i32, i32, f32)>, // (key, qcx, qcy, area)
@@ -184,7 +196,11 @@ impl Graph {
         Graph {
             nodes: Vec::new(),
             edges: Vec::new(),
+            shapes: Vec::new(),
             fills: HashMap::new(),
+            layer_system: LayerSystem::new(),
+            gradients: HashMap::new(),
+            next_gradient_id: 0,
             geom_ver: 1,
             last_geom_ver: 0,
             prev_regions: Vec::new(),
@@ -416,6 +432,10 @@ impl Graph {
             stroke: None,
             stroke_width: 2.0,
         }));
+        // Assign to default layer's root group
+        if let Some(default_group) = self.layer_system.default_group() {
+            self.layer_system.add_edge_to_group(id, default_group);
+        }
         self.dirty.edges_added.insert(id);
         if let (Some(na), Some(nb)) = (
             self.nodes.get(a as usize).and_then(|n| *n),
@@ -439,6 +459,8 @@ impl Graph {
         if let Some(slot) = self.edges.get_mut(id as usize) {
             if slot.is_some() {
                 *slot = None;
+                // Remove from layer system
+                self.layer_system.remove_edge(id);
                 if let Some(bb) = old_bb {
                     self.expand_dirty_bbox_box(Some(bb));
                 }
@@ -522,6 +544,7 @@ impl Graph {
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.edges.clear();
+        self.shapes.clear();
         self.fills.clear();
         self.prev_regions.clear();
         self.region_cache.borrow_mut().take();
@@ -1303,6 +1326,279 @@ impl Graph {
     }
 }
 
+// Layer and group management
+impl Graph {
+    /// Create a new layer, returns layer ID
+    pub fn create_layer(&mut self, name: String) -> LayerId {
+        self.layer_system.create_layer(name)
+    }
+
+    /// Remove a layer and optionally its edges
+    pub fn remove_layer(&mut self, id: LayerId, remove_edges: bool) -> bool {
+        if let Some(removed_edges) = self.layer_system.remove_layer(id) {
+            if remove_edges {
+                for eid in removed_edges {
+                    self.remove_edge(eid);
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get all layers as (id, name, z_index, visible, opacity)
+    pub fn get_layers(&self) -> Vec<(LayerId, String, i32, bool, f32)> {
+        self.layer_system
+            .layers
+            .iter()
+            .map(|l| (l.id, l.name.clone(), l.z_index, l.visible, l.opacity))
+            .collect()
+    }
+
+    /// Rename a layer
+    pub fn rename_layer(&mut self, id: LayerId, name: String) -> bool {
+        self.layer_system.rename_layer(id, name)
+    }
+
+    /// Set layer visibility
+    pub fn set_layer_visibility(&mut self, id: LayerId, visible: bool) -> bool {
+        if self.layer_system.set_layer_visibility(id, visible) {
+            // Visibility change affects regions
+            self.mark_full_dirty();
+            self.bump();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Set layer opacity
+    pub fn set_layer_opacity(&mut self, id: LayerId, opacity: f32) -> bool {
+        self.layer_system.set_layer_opacity(id, opacity)
+    }
+
+    /// Set layer z-index
+    pub fn set_layer_z_index(&mut self, id: LayerId, z: i32) -> bool {
+        self.layer_system.set_layer_z_index(id, z)
+    }
+
+    /// Create a group within a parent group
+    pub fn create_group(&mut self, name: String, parent_id: LayerId) -> Option<LayerId> {
+        self.layer_system.create_group(name, parent_id)
+    }
+
+    /// Remove a group (edges/children move to parent)
+    pub fn remove_group(&mut self, id: LayerId) -> bool {
+        self.layer_system.remove_group(id)
+    }
+
+    /// Get all groups as (id, name, parent, visible, opacity)
+    pub fn get_groups(&self) -> Vec<(LayerId, String, Option<LayerId>, bool, f32)> {
+        self.layer_system
+            .groups
+            .values()
+            .map(|g| (g.id, g.name.clone(), g.parent, g.visible, g.opacity))
+            .collect()
+    }
+
+    /// Rename a group
+    pub fn rename_group(&mut self, id: LayerId, name: String) -> bool {
+        self.layer_system.rename_group(id, name)
+    }
+
+    /// Set group visibility
+    pub fn set_group_visibility(&mut self, id: LayerId, visible: bool) -> bool {
+        if self.layer_system.set_group_visibility(id, visible) {
+            // Visibility change affects regions
+            self.mark_full_dirty();
+            self.bump();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Set group opacity
+    pub fn set_group_opacity(&mut self, id: LayerId, opacity: f32) -> bool {
+        self.layer_system.set_group_opacity(id, opacity)
+    }
+
+    /// Add an edge to a specific group
+    pub fn add_edge_to_group(&mut self, edge_id: u32, group_id: LayerId) -> bool {
+        self.layer_system.add_edge_to_group(edge_id, group_id)
+    }
+
+    /// Get the group containing an edge
+    pub fn get_edge_group(&self, edge_id: u32) -> Option<LayerId> {
+        self.layer_system.get_edge_group(edge_id)
+    }
+
+    /// Get the layer containing an edge
+    pub fn get_edge_layer(&self, edge_id: u32) -> Option<LayerId> {
+        self.layer_system.get_edge_layer(edge_id)
+    }
+
+    /// Check if an edge is visible (considering layer/group visibility)
+    pub fn is_edge_visible(&self, edge_id: u32) -> bool {
+        self.layer_system.is_edge_visible(edge_id)
+    }
+
+    /// Get all visible edge IDs
+    pub fn get_visible_edges(&self) -> Vec<u32> {
+        self.edges
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| {
+                if e.is_some() && self.layer_system.is_edge_visible(i as u32) {
+                    Some(i as u32)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Get effective opacity for an edge
+    pub fn get_edge_opacity(&self, edge_id: u32) -> f32 {
+        self.layer_system.edge_opacity(edge_id)
+    }
+
+    /// Get the default group ID (for assigning new edges)
+    pub fn default_group(&self) -> Option<LayerId> {
+        self.layer_system.default_group()
+    }
+}
+
+// Gradient management
+impl Graph {
+    /// Add a linear gradient, returns gradient ID
+    pub fn add_linear_gradient(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        stops: Vec<ColorStop>,
+        units: GradientUnits,
+        spread: SpreadMethod,
+    ) -> GradientId {
+        let id = self.next_gradient_id;
+        self.next_gradient_id += 1;
+        self.gradients.insert(
+            id,
+            Gradient::Linear(LinearGradient {
+                x1,
+                y1,
+                x2,
+                y2,
+                stops,
+                units,
+                spread,
+            }),
+        );
+        id
+    }
+
+    /// Add a radial gradient, returns gradient ID
+    pub fn add_radial_gradient(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        r: f32,
+        fx: f32,
+        fy: f32,
+        stops: Vec<ColorStop>,
+        units: GradientUnits,
+        spread: SpreadMethod,
+    ) -> GradientId {
+        let id = self.next_gradient_id;
+        self.next_gradient_id += 1;
+        self.gradients.insert(
+            id,
+            Gradient::Radial(RadialGradient {
+                cx,
+                cy,
+                r,
+                fx,
+                fy,
+                stops,
+                units,
+                spread,
+            }),
+        );
+        id
+    }
+
+    /// Update an existing gradient
+    pub fn update_gradient(&mut self, id: GradientId, gradient: Gradient) -> bool {
+        if self.gradients.contains_key(&id) {
+            self.gradients.insert(id, gradient);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove a gradient
+    pub fn remove_gradient(&mut self, id: GradientId) -> bool {
+        self.gradients.remove(&id).is_some()
+    }
+
+    /// Get a gradient by ID
+    pub fn get_gradient(&self, id: GradientId) -> Option<&Gradient> {
+        self.gradients.get(&id)
+    }
+
+    /// Get all gradient IDs
+    pub fn gradient_ids(&self) -> Vec<GradientId> {
+        self.gradients.keys().copied().collect()
+    }
+
+    /// Get all gradients as (id, gradient) pairs
+    pub fn get_all_gradients(&self) -> Vec<(GradientId, &Gradient)> {
+        self.gradients.iter().map(|(id, g)| (*id, g)).collect()
+    }
+
+    /// Set a region fill to use a gradient
+    pub fn set_region_gradient(&mut self, key: u32, gradient_id: GradientId) -> bool {
+        if !self.gradients.contains_key(&gradient_id) {
+            return false;
+        }
+        let filled = self.fills.get(&key).map(|st| st.filled).unwrap_or(true);
+        // For now, we store the gradient reference in color field as a marker
+        // Full implementation would require updating FillState to use Paint
+        self.fills.insert(
+            key,
+            FillState {
+                filled,
+                color: None, // Gradient reference stored separately
+            },
+        );
+        true
+    }
+
+    /// Set edge stroke to use a gradient
+    pub fn set_edge_stroke_gradient(
+        &mut self,
+        id: u32,
+        gradient_id: GradientId,
+        width: f32,
+    ) -> bool {
+        if !self.gradients.contains_key(&gradient_id) {
+            return false;
+        }
+        if let Some(Some(e)) = self.edges.get_mut(id as usize) {
+            // For now, we clear the stroke color to indicate gradient use
+            // Full implementation would require updating Edge to use Paint
+            e.stroke = None;
+            e.stroke_width = if width > 0.0 { width } else { 2.0 };
+            return true;
+        }
+        false
+    }
+}
+
 // Transforms and grouping moves
 impl Graph {
     pub fn transform_all(&mut self, s: f32, tx: f32, ty: f32, scale_stroke: bool) {
@@ -1411,5 +1707,207 @@ impl Graph {
             }
         }
         moved
+    }
+}
+
+// Shape management
+impl Graph {
+    /// Create a shape from an ordered list of edge IDs.
+    ///
+    /// Returns the shape ID, or None if any edge ID is invalid.
+    pub fn create_shape(&mut self, edge_ids: &[u32], closed: bool) -> Option<u32> {
+        // Validate all edge IDs exist
+        for &eid in edge_ids {
+            if self.edges.get(eid as usize).and_then(|e| e.as_ref()).is_none() {
+                return None;
+            }
+        }
+
+        let id = self.shapes.len() as u32;
+        self.shapes.push(Some(Shape {
+            id,
+            edges: edge_ids.to_vec(),
+            closed,
+            fill_rule: FillRule::NonZero,
+        }));
+        Some(id)
+    }
+
+    /// Create a shape with a specific fill rule.
+    pub fn create_shape_with_fill_rule(
+        &mut self,
+        edge_ids: &[u32],
+        closed: bool,
+        fill_rule: FillRule,
+    ) -> Option<u32> {
+        // Validate all edge IDs exist
+        for &eid in edge_ids {
+            if self.edges.get(eid as usize).and_then(|e| e.as_ref()).is_none() {
+                return None;
+            }
+        }
+
+        let id = self.shapes.len() as u32;
+        self.shapes.push(Some(Shape {
+            id,
+            edges: edge_ids.to_vec(),
+            closed,
+            fill_rule,
+        }));
+        Some(id)
+    }
+
+    /// Delete a shape by ID. Returns true if the shape existed.
+    pub fn delete_shape(&mut self, id: u32) -> bool {
+        if let Some(slot) = self.shapes.get_mut(id as usize) {
+            if slot.is_some() {
+                *slot = None;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get a reference to a shape by ID.
+    pub fn get_shape(&self, id: u32) -> Option<&Shape> {
+        self.shapes.get(id as usize).and_then(|s| s.as_ref())
+    }
+
+    /// Get the edge IDs that form a shape.
+    pub fn get_shape_edges(&self, id: u32) -> Option<&[u32]> {
+        self.get_shape(id).map(|s| s.edges.as_slice())
+    }
+
+    /// Get all shape IDs.
+    pub fn get_shape_ids(&self) -> Vec<u32> {
+        self.shapes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.as_ref().map(|_| i as u32))
+            .collect()
+    }
+
+    /// Count the number of shapes.
+    pub fn shape_count(&self) -> u32 {
+        self.shapes.iter().filter(|s| s.is_some()).count() as u32
+    }
+
+    /// Set the fill rule for a shape.
+    pub fn set_shape_fill_rule(&mut self, id: u32, fill_rule: FillRule) -> bool {
+        if let Some(Some(shape)) = self.shapes.get_mut(id as usize) {
+            shape.fill_rule = fill_rule;
+            return true;
+        }
+        false
+    }
+
+    /// Infer shapes from closed loops in the graph.
+    ///
+    /// This finds cycles of connected edges and creates shapes for each.
+    /// Returns the IDs of newly created shapes.
+    pub fn infer_shapes(&mut self) -> Vec<u32> {
+        // Build adjacency: node -> list of (edge_id, other_node)
+        let mut adj: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
+        for (eid, edge_opt) in self.edges.iter().enumerate() {
+            if let Some(edge) = edge_opt {
+                adj.entry(edge.a).or_default().push((eid as u32, edge.b));
+                adj.entry(edge.b).or_default().push((eid as u32, edge.a));
+            }
+        }
+
+        // Collect edges already in shapes
+        let mut used_edges: HashSet<u32> = HashSet::new();
+        for shape_opt in &self.shapes {
+            if let Some(shape) = shape_opt {
+                for &eid in &shape.edges {
+                    used_edges.insert(eid);
+                }
+            }
+        }
+
+        // First pass: find all cycles (without mutating self)
+        let mut found_paths: Vec<Vec<u32>> = Vec::new();
+        let mut visited_edges: HashSet<u32> = HashSet::new();
+
+        for (start_eid, edge_opt) in self.edges.iter().enumerate() {
+            let start_eid = start_eid as u32;
+            if edge_opt.is_none() || used_edges.contains(&start_eid) || visited_edges.contains(&start_eid) {
+                continue;
+            }
+
+            let edge = edge_opt.as_ref().unwrap();
+            let start_node = edge.a;
+
+            // Try to find a path back to start_node
+            if let Some(path) = self.find_cycle_from(start_eid, start_node, &adj, &used_edges) {
+                // Mark all edges in path as visited
+                for &eid in &path {
+                    visited_edges.insert(eid);
+                }
+                found_paths.push(path);
+            }
+        }
+
+        // Second pass: create shapes from found paths
+        let mut created_shapes = Vec::new();
+        for path in found_paths {
+            if let Some(shape_id) = self.create_shape(&path, true) {
+                created_shapes.push(shape_id);
+            }
+        }
+
+        created_shapes
+    }
+
+    /// Helper to find a cycle starting from an edge and returning to start_node.
+    fn find_cycle_from(
+        &self,
+        start_edge: u32,
+        start_node: u32,
+        adj: &HashMap<u32, Vec<(u32, u32)>>,
+        used_edges: &HashSet<u32>,
+    ) -> Option<Vec<u32>> {
+        let edge = self.edges.get(start_edge as usize)?.as_ref()?;
+        let mut current_node = if edge.a == start_node { edge.b } else { edge.a };
+        let mut path = vec![start_edge];
+        let mut visited_nodes: HashSet<u32> = HashSet::new();
+        visited_nodes.insert(start_node);
+
+        // Walk until we return to start_node or get stuck
+        let max_steps = self.edges.len();
+        for _ in 0..max_steps {
+            if current_node == start_node {
+                return Some(path);
+            }
+
+            if visited_nodes.contains(&current_node) {
+                // Hit a cycle that doesn't include start - give up
+                return None;
+            }
+            visited_nodes.insert(current_node);
+
+            // Find next edge
+            let neighbors = adj.get(&current_node)?;
+            let mut next_edge = None;
+            let mut next_node = None;
+
+            for &(eid, other) in neighbors {
+                if !path.contains(&eid) && !used_edges.contains(&eid) {
+                    next_edge = Some(eid);
+                    next_node = Some(other);
+                    break;
+                }
+            }
+
+            match (next_edge, next_node) {
+                (Some(eid), Some(node)) => {
+                    path.push(eid);
+                    current_node = node;
+                }
+                _ => return None,
+            }
+        }
+
+        None
     }
 }

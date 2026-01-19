@@ -19,7 +19,7 @@
       <div class="hint">
         Build with <code>wasm-pack build --target web</code>.
         Drag nodes. Connect: Alt+drag from node to node.
-        Snap: <code>S</code>. Fill: <code>F</code>. Pen: <code>P</code>. Bend: <code>B</code>. Text: <code>T</code>.
+        Snap: <code>S</code>. Fill: <code>F</code>. Pen: <code>P</code>. Bend: <code>B</code>. Text: <code>T</code>. Rect: <code>U</code>. Ellipse: <code>O</code>.
         Undo: Ctrl/Cmd+Z. Redo: Shift+Ctrl/Cmd+Z.
       </div>
       <div style="margin-top:8px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
@@ -32,6 +32,8 @@
           <button id="bendBtn" title="Toggle bend tool (B)">Bend</button>
           <button id="bucketBtn" title="Toggle paint bucket (F)">Bucket</button>
           <button id="textBtn" title="Text tool (T)">Text</button>
+          <button id="rectBtn" title="Rectangle tool (U)">Rect</button>
+          <button id="ellipseBtn" title="Ellipse tool (O)">Ellipse</button>
           <button id="refBtn" title="Toggle reference SVG overlay (R)">Ref</button>
         </div>
         <div id="boolToolbar" style="display:flex; gap:6px; align-items:center; border:1px solid #e2e2e2; border-radius:8px; padding:6px; background:#fff;">
@@ -152,6 +154,11 @@
         // Text tool state
         textMode: false,
         textPending: null, // position for new text: [x, y]
+        // Primitive shape tools
+        rectMode: false,
+        ellipseMode: false,
+        primitiveStart: null, // [x, y] drag start
+        primitiveCurrent: null, // [x, y] current drag position
         // Shape/Boolean state
         shapes: [], // [{ id, edges: [...] }]
         selectedShapes: [], // [id, id] for boolean ops (max 2)
@@ -168,12 +175,16 @@
         else if (state.bucket) mode = 'Bucket';
         else if (state.bend) mode = 'Bend';
         else if (state.textMode) mode = 'Text';
+        else if (state.rectMode) mode = 'Rectangle';
+        else if (state.ellipseMode) mode = 'Ellipse';
         modeLabel.textContent = 'Mode: ' + mode;
-        canvas.style.cursor = state.bucket ? 'cell' : (state.bend ? 'crosshair' : (state.pen ? 'crosshair' : (state.textMode ? 'text' : 'default')));
+        canvas.style.cursor = state.bucket ? 'cell' : (state.bend ? 'crosshair' : (state.pen ? 'crosshair' : (state.textMode ? 'text' : ((state.rectMode || state.ellipseMode) ? 'crosshair' : 'default'))));
         document.getElementById('bucketBtn').classList.toggle('active', state.bucket);
         const bendBtn = document.getElementById('bendBtn'); if (bendBtn) bendBtn.classList.toggle('active', state.bend);
         const penBtn = document.getElementById('penBtn'); if (penBtn) penBtn.classList.toggle('active', state.pen);
         const textBtn = document.getElementById('textBtn'); if (textBtn) textBtn.classList.toggle('active', state.textMode);
+        const rectBtn = document.getElementById('rectBtn'); if (rectBtn) rectBtn.classList.toggle('active', state.rectMode);
+        const ellipseBtn = document.getElementById('ellipseBtn'); if (ellipseBtn) ellipseBtn.classList.toggle('active', state.ellipseMode);
         // Show/hide text properties panel
         const textProps = document.getElementById('textProps');
         const shapeProps = document.getElementById('shapeProps');
@@ -502,6 +513,36 @@
           ctx.beginPath();
           ctx.moveTo(state.freePoints[0], state.freePoints[1]);
           for (let i = 2; i < state.freePoints.length; i += 2) ctx.lineTo(state.freePoints[i], state.freePoints[i+1]);
+          ctx.strokeStyle = '#ff9800';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 6]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // Rectangle preview
+        if (state.rectMode && state.primitiveStart && state.primitiveCurrent) {
+          const [sx, sy] = state.primitiveStart;
+          const [cx, cy] = state.primitiveCurrent;
+          const w = cx - sx;
+          const h = cy - sy;
+          ctx.strokeStyle = '#ff9800';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 6]);
+          ctx.strokeRect(sx, sy, w, h);
+          ctx.setLineDash([]);
+        }
+
+        // Ellipse preview
+        if (state.ellipseMode && state.primitiveStart && state.primitiveCurrent) {
+          const [sx, sy] = state.primitiveStart;
+          const [cx, cy] = state.primitiveCurrent;
+          const centerX = (sx + cx) / 2;
+          const centerY = (sy + cy) / 2;
+          const rx = Math.abs(cx - sx) / 2;
+          const ry = Math.abs(cy - sy) / 2;
+          ctx.beginPath();
+          ctx.ellipse(centerX, centerY, rx, ry, 0, 0, Math.PI * 2);
           ctx.strokeStyle = '#ff9800';
           ctx.lineWidth = 2;
           ctx.setLineDash([6, 6]);
@@ -902,6 +943,24 @@
           return;
         }
 
+        // Rectangle tool: start drag
+        if (state.rectMode) {
+          const [sx, sy] = snapPoint(x, y, null);
+          state.primitiveStart = [sx, sy];
+          state.primitiveCurrent = [sx, sy];
+          render();
+          return;
+        }
+
+        // Ellipse tool: start drag
+        if (state.ellipseMode) {
+          const [sx, sy] = snapPoint(x, y, null);
+          state.primitiveStart = [sx, sy];
+          state.primitiveCurrent = [sx, sy];
+          render();
+          return;
+        }
+
         // Text tool: click to add text or select existing text
         if (state.textMode) {
           // Check if clicking on existing text
@@ -978,6 +1037,13 @@
 
       window.addEventListener('mousemove', (evt) => {
         const [x, y] = canvasPoint(evt);
+        // Rectangle/Ellipse drag preview
+        if ((state.rectMode || state.ellipseMode) && state.primitiveStart) {
+          const [sx, sy] = snapPoint(x, y, null);
+          state.primitiveCurrent = [sx, sy];
+          render();
+          return;
+        }
         if (state.pen && state.penMode === 'points' && state.penPath) {
           const [sx, sy] = snapPoint(x, y, null);
           state.penPreview = [sx, sy];
@@ -1057,6 +1123,57 @@
       window.addEventListener('mouseup', (evt) => {
         if (state.bending) { state.bending = null; return; }
         const [x, y] = canvasPoint(evt);
+
+        // Finish rectangle on mouseup
+        if (state.rectMode && state.primitiveStart) {
+          const [sx, sy] = state.primitiveStart;
+          const [ex, ey] = snapPoint(x, y, null);
+          state.primitiveStart = null;
+          state.primitiveCurrent = null;
+          const w = ex - sx;
+          const h = ey - sy;
+          // Only create if there's a meaningful size
+          if (Math.abs(w) > 2 && Math.abs(h) > 2) {
+            try {
+              const minX = Math.min(sx, ex);
+              const minY = Math.min(sy, ey);
+              const result = g.add_rectangle(minX, minY, Math.abs(w), Math.abs(h), 0);
+              console.log('Created rectangle:', result);
+              if (result && result.edges && result.edges.length > 0) {
+                state.selection = { kind: 'edge', id: result.edges[0] };
+              }
+              scheduleRegions();
+            } catch (e) { console.error('Rectangle creation failed:', e); }
+          }
+          render();
+          return;
+        }
+
+        // Finish ellipse on mouseup
+        if (state.ellipseMode && state.primitiveStart) {
+          const [sx, sy] = state.primitiveStart;
+          const [ex, ey] = snapPoint(x, y, null);
+          state.primitiveStart = null;
+          state.primitiveCurrent = null;
+          const rx = Math.abs(ex - sx) / 2;
+          const ry = Math.abs(ey - sy) / 2;
+          // Only create if there's a meaningful size
+          if (rx > 2 && ry > 2) {
+            try {
+              const cx = (sx + ex) / 2;
+              const cy = (sy + ey) / 2;
+              const result = g.add_ellipse(cx, cy, rx, ry);
+              console.log('Created ellipse:', result);
+              if (result && result.edges && result.edges.length > 0) {
+                state.selection = { kind: 'edge', id: result.edges[0] };
+              }
+              scheduleRegions();
+            } catch (e) { console.error('Ellipse creation failed:', e); }
+          }
+          render();
+          return;
+        }
+
         // Finish free draw on mouseup
         if (state.pen && state.penMode === 'free' && state.freeDrawing) {
           const pts = Array.isArray(state.freePoints) ? state.freePoints.slice() : [];
@@ -1113,38 +1230,342 @@
         }
       });
 
+      // Copy/Paste functionality
+      const PASTE_OFFSET = 15;
+
+      async function copySelection() {
+        if (!state.selection) return;
+        const payload = { type: 'contour-clipboard', version: 1, element: null };
+
+        switch (state.selection.kind) {
+          case 'node': {
+            const pos = g.get_node(state.selection.id);
+            if (!pos) return;
+            payload.element = { kind: 'node', x: pos[0], y: pos[1] };
+            break;
+          }
+          case 'edge': {
+            const ed = g.get_edge_data();
+            const idx = Array.from(ed.ids).indexOf(state.selection.id);
+            if (idx < 0) return;
+
+            const aId = ed.endpoints[idx * 2];
+            const bId = ed.endpoints[idx * 2 + 1];
+            const nodeA = g.get_node(aId);
+            const nodeB = g.get_node(bId);
+            if (!nodeA || !nodeB) return;
+
+            // Determine edge kind and get details
+            let edgeKind = 'line';
+            const kindVal = ed.kinds[idx];
+            if (kindVal === 1) {
+              // Cubic edge - get handles
+              const handles = g.get_handles(state.selection.id);
+              if (handles) {
+                edgeKind = {
+                  cubic: {
+                    ha: { x: handles[0] - nodeA[0], y: handles[1] - nodeA[1] },
+                    hb: { x: handles[2] - nodeB[0], y: handles[3] - nodeB[1] },
+                    mode: g.get_handle_mode ? g.get_handle_mode(state.selection.id) || 0 : 0
+                  }
+                };
+              }
+            } else if (kindVal === 2 && g.get_polyline_points) {
+              // Polyline edge
+              const pts = g.get_polyline_points(state.selection.id);
+              if (pts && pts.length > 0) {
+                const points = [];
+                for (let i = 0; i < pts.length; i += 2) {
+                  points.push({ x: pts[i], y: pts[i + 1] });
+                }
+                edgeKind = { polyline: { points } };
+              }
+            }
+
+            // Get stroke style
+            let stroke = null;
+            let strokeWidth = 2;
+            if (ed.stroke_rgba && ed.stroke_widths) {
+              const r = ed.stroke_rgba[idx * 4];
+              const gg = ed.stroke_rgba[idx * 4 + 1];
+              const b = ed.stroke_rgba[idx * 4 + 2];
+              const a = ed.stroke_rgba[idx * 4 + 3];
+              strokeWidth = ed.stroke_widths[idx] || 2;
+              if (a > 0) {
+                stroke = [r, gg, b, a];
+              }
+            }
+
+            payload.element = {
+              kind: 'edge',
+              nodeA: { x: nodeA[0], y: nodeA[1] },
+              nodeB: { x: nodeB[0], y: nodeB[1] },
+              edgeKind,
+              stroke,
+              strokeWidth
+            };
+            break;
+          }
+          case 'text': {
+            const text = g.get_text(state.selection.id);
+            if (!text) return;
+            payload.element = {
+              kind: 'text',
+              content: text.content,
+              position: text.position,
+              rotation: text.rotation || 0,
+              style: text.style,
+              align: text.align,
+              textType: text.text_type
+            };
+            break;
+          }
+          default:
+            return;
+        }
+
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(payload));
+        } catch (err) {
+          console.warn('Copy failed:', err);
+        }
+      }
+
+      async function pasteFromClipboard() {
+        let text;
+        try {
+          text = await navigator.clipboard.readText();
+        } catch (err) {
+          console.warn('Paste failed - clipboard access denied:', err);
+          return;
+        }
+
+        let payload;
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          console.warn('Paste failed - invalid JSON');
+          return;
+        }
+
+        // Validate clipboard format
+        if (!payload || payload.type !== 'contour-clipboard' || !payload.element) {
+          return; // Silently ignore non-contour clipboard data
+        }
+
+        // Save state for undo
+        const beforeJson = g.to_json();
+
+        const elem = payload.element;
+        let newSelection = null;
+
+        switch (elem.kind) {
+          case 'node': {
+            const newX = elem.x + PASTE_OFFSET;
+            const newY = elem.y + PASTE_OFFSET;
+            const newId = g.add_node(newX, newY);
+            newSelection = { kind: 'node', id: newId };
+            break;
+          }
+          case 'edge': {
+            // Create both nodes with offset
+            const newAId = g.add_node(elem.nodeA.x + PASTE_OFFSET, elem.nodeA.y + PASTE_OFFSET);
+            const newBId = g.add_node(elem.nodeB.x + PASTE_OFFSET, elem.nodeB.y + PASTE_OFFSET);
+
+            // Create the edge
+            const newEdgeId = g.add_edge(newAId, newBId);
+            if (newEdgeId == null) break;
+
+            // Set edge kind if cubic
+            if (elem.edgeKind && typeof elem.edgeKind === 'object' && elem.edgeKind.cubic) {
+              const c = elem.edgeKind.cubic;
+              const newAPos = g.get_node(newAId);
+              const newBPos = g.get_node(newBId);
+              if (newAPos && newBPos) {
+                g.set_edge_cubic(
+                  newEdgeId,
+                  newAPos[0] + c.ha.x, newAPos[1] + c.ha.y,
+                  newBPos[0] + c.hb.x, newBPos[1] + c.hb.y
+                );
+                if (c.mode != null && c.mode !== 0 && g.set_handle_mode) {
+                  g.set_handle_mode(newEdgeId, c.mode);
+                }
+              }
+            } else if (elem.edgeKind && typeof elem.edgeKind === 'object' && elem.edgeKind.polyline && g.set_edge_polyline) {
+              const pts = elem.edgeKind.polyline.points;
+              const flat = new Float32Array(pts.length * 2);
+              for (let i = 0; i < pts.length; i++) {
+                flat[i * 2] = pts[i].x + PASTE_OFFSET;
+                flat[i * 2 + 1] = pts[i].y + PASTE_OFFSET;
+              }
+              g.set_edge_polyline(newEdgeId, flat);
+            }
+
+            // Set stroke style
+            if (elem.stroke && elem.stroke.length === 4) {
+              g.set_edge_style(newEdgeId, elem.stroke[0], elem.stroke[1],
+                               elem.stroke[2], elem.stroke[3], elem.strokeWidth || 2);
+            }
+
+            newSelection = { kind: 'edge', id: newEdgeId };
+            break;
+          }
+          case 'text': {
+            const newX = (elem.position?.x || 0) + PASTE_OFFSET;
+            const newY = (elem.position?.y || 0) + PASTE_OFFSET;
+            const newId = g.add_text(elem.content || '', newX, newY);
+
+            // Restore text properties
+            if (elem.rotation && g.set_text_rotation) g.set_text_rotation(newId, elem.rotation);
+            if (elem.align != null && g.set_text_align) g.set_text_align(newId, elem.align);
+            if (elem.style) {
+              if (elem.style.font_family && elem.style.font_size && g.set_text_font) {
+                g.set_text_font(newId, elem.style.font_family, elem.style.font_size);
+              }
+              if (elem.style.font_weight && g.set_text_font_weight) g.set_text_font_weight(newId, elem.style.font_weight);
+              if (elem.style.font_style != null && g.set_text_font_style) g.set_text_font_style(newId, elem.style.font_style);
+              if (elem.style.fill_color && g.set_text_fill_color) {
+                const c = elem.style.fill_color;
+                g.set_text_fill_color(newId, c.r, c.g, c.b, c.a);
+              }
+              if (elem.style.stroke_color && g.set_text_stroke_color) {
+                const c = elem.style.stroke_color;
+                g.set_text_stroke_color(newId, c.r, c.g, c.b, c.a);
+              }
+              if (elem.style.stroke_width && g.set_text_stroke_width) g.set_text_stroke_width(newId, elem.style.stroke_width);
+              if (elem.style.letter_spacing && g.set_text_letter_spacing) g.set_text_letter_spacing(newId, elem.style.letter_spacing);
+              if (elem.style.line_height && g.set_text_line_height) g.set_text_line_height(newId, elem.style.line_height);
+            }
+
+            // Handle text box type
+            if (elem.textType && typeof elem.textType === 'object' && elem.textType.type === 'box' && g.convert_text_to_box) {
+              g.convert_text_to_box(newId, elem.textType.width, elem.textType.height);
+              if (elem.textType.vertical_align != null && g.set_text_box_vertical_align) {
+                g.set_text_box_vertical_align(newId, elem.textType.vertical_align);
+              }
+              if (elem.textType.overflow != null && g.set_text_box_overflow) {
+                g.set_text_box_overflow(newId, elem.textType.overflow);
+              }
+            }
+
+            newSelection = { kind: 'text', id: newId };
+            break;
+          }
+        }
+
+        if (newSelection) {
+          // Add to undo history
+          state.history.push({
+            type: 'paste',
+            before: beforeJson,
+            after: g.to_json(),
+            selection: newSelection
+          });
+          state.redo.length = 0;
+
+          // Select the pasted element
+          state.selection = newSelection;
+        }
+
+        scheduleRegions();
+        render();
+      }
+
+      async function cutSelection() {
+        if (!state.selection) return;
+        await copySelection();
+
+        // Save state for undo before deleting
+        const beforeJson = g.to_json();
+
+        // Delete based on selection type
+        switch (state.selection.kind) {
+          case 'node':
+            g.remove_node(state.selection.id);
+            break;
+          case 'edge':
+            g.remove_edge(state.selection.id);
+            break;
+          case 'text':
+            g.remove_text(state.selection.id);
+            break;
+        }
+
+        state.history.push({
+          type: 'cut',
+          before: beforeJson,
+          after: g.to_json(),
+          selection: null
+        });
+        state.redo.length = 0;
+
+        state.selection = null;
+        scheduleRegions();
+        render();
+      }
+
       window.addEventListener('keydown', (evt) => {
         const mod = evt.ctrlKey || evt.metaKey;
-        if (mod && evt.key.toLowerCase() === 'z') {
+        if (mod && evt.key.toLowerCase() === 'c' && !evt.shiftKey) {
+          // Copy (Ctrl/Cmd+C)
+          evt.preventDefault();
+          copySelection();
+        } else if (mod && evt.key.toLowerCase() === 'v') {
+          // Paste (Ctrl/Cmd+V)
+          evt.preventDefault();
+          pasteFromClipboard();
+        } else if (mod && evt.key.toLowerCase() === 'x') {
+          // Cut (Ctrl/Cmd+X)
+          evt.preventDefault();
+          cutSelection();
+        } else if (mod && evt.key.toLowerCase() === 'z') {
           evt.preventDefault();
           if (evt.shiftKey) {
             // redo
             const op = state.redo.pop();
-            if (op && op.type === 'move_node') {
-              g.move_node(op.id, op.after[0], op.after[1]);
+            if (op) {
+              if (op.type === 'move_node') {
+                g.move_node(op.id, op.after[0], op.after[1]);
+              } else if (op.type === 'paste' || op.type === 'cut') {
+                g.from_json(op.after);
+                state.selection = op.selection;
+              }
               state.history.push(op);
+              scheduleRegions();
               render();
             }
           } else {
             // undo
             const op = state.history.pop();
-            if (op && op.type === 'move_node') {
-              g.move_node(op.id, op.before[0], op.before[1]);
+            if (op) {
+              if (op.type === 'move_node') {
+                g.move_node(op.id, op.before[0], op.before[1]);
+              } else if (op.type === 'paste' || op.type === 'cut') {
+                g.from_json(op.before);
+                state.selection = null;
+              }
               state.redo.push(op);
+              scheduleRegions();
               render();
             }
           }
         } else if (evt.key.toLowerCase() === 's') {
           state.snap = !state.snap; updateSnapLabel(); render();
         } else if (evt.key.toLowerCase() === 'f') {
-          state.bucket = !state.bucket; if (state.bucket) { state.pen = false; state.bend = false; state.textMode = false; } updateModeLabel(); render();
+          state.bucket = !state.bucket; if (state.bucket) { state.pen = false; state.bend = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; } updateModeLabel(); render();
         } else if (evt.key.toLowerCase() === 'b') {
-          state.bend = !state.bend; if (state.bend) { state.pen = false; state.bucket = false; state.textMode = false; } updateModeLabel(); render();
+          state.bend = !state.bend; if (state.bend) { state.pen = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; } updateModeLabel(); render();
         } else if (evt.key.toLowerCase() === 'p') {
-          state.pen = !state.pen; if (state.pen) { state.bend = false; state.bucket = false; state.textMode = false; } else { state.penPath = null; state.penPreview = null; }
+          state.pen = !state.pen; if (state.pen) { state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; } else { state.penPath = null; state.penPreview = null; }
           updateModeLabel(); render();
         } else if (evt.key.toLowerCase() === 't') {
-          state.textMode = !state.textMode; if (state.textMode) { state.pen = false; state.bend = false; state.bucket = false; state.penPath = null; state.penPreview = null; }
+          state.textMode = !state.textMode; if (state.textMode) { state.pen = false; state.bend = false; state.bucket = false; state.rectMode = false; state.ellipseMode = false; state.penPath = null; state.penPreview = null; }
+          updateModeLabel(); render();
+        } else if (evt.key.toLowerCase() === 'u') {
+          state.rectMode = !state.rectMode; if (state.rectMode) { state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.ellipseMode = false; state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null; }
+          updateModeLabel(); render();
+        } else if (evt.key.toLowerCase() === 'o') {
+          state.ellipseMode = !state.ellipseMode; if (state.ellipseMode) { state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null; }
           updateModeLabel(); render();
         } else if (evt.key === 'Enter') {
           if (state.pen && state.penPath) { state.penPath = null; state.penPreview = null; render(); }
@@ -1767,7 +2188,7 @@
       });
 
       const penBtn = document.getElementById('penBtn');
-      if (penBtn) penBtn.addEventListener('click', () => { state.pen = !state.pen; if (state.pen) { state.bend = false; state.bucket = false; state.textMode = false; } else { state.penPath = null; state.penPreview = null; } updateModeLabel(); render(); });
+      if (penBtn) penBtn.addEventListener('click', () => { state.pen = !state.pen; if (state.pen) { state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; } else { state.penPath = null; state.penPreview = null; } updateModeLabel(); render(); });
       const penModeSel = document.getElementById('penMode');
       if (penModeSel) penModeSel.addEventListener('change', (e) => {
         const v = e.target && e.target.value ? String(e.target.value) : 'points';
@@ -1777,10 +2198,10 @@
         updateModeLabel(); render();
       });
       document.getElementById('bucketBtn').addEventListener('click', () => {
-        state.bucket = !state.bucket; if (state.bucket) { state.pen = false; state.bend = false; state.textMode = false; } updateModeLabel(); render();
+        state.bucket = !state.bucket; if (state.bucket) { state.pen = false; state.bend = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; } updateModeLabel(); render();
       });
       document.getElementById('bendBtn').addEventListener('click', () => {
-        state.bend = !state.bend; if (state.bend) { state.pen = false; state.bucket = false; state.textMode = false; } updateModeLabel(); render();
+        state.bend = !state.bend; if (state.bend) { state.pen = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; } updateModeLabel(); render();
       });
       const refBtn = document.getElementById('refBtn');
       if (refBtn) {
@@ -1797,8 +2218,34 @@
         textBtn.addEventListener('click', () => {
           state.textMode = !state.textMode;
           if (state.textMode) {
-            state.pen = false; state.bend = false; state.bucket = false;
+            state.pen = false; state.bend = false; state.bucket = false; state.rectMode = false; state.ellipseMode = false;
             state.penPath = null; state.penPreview = null;
+          }
+          updateModeLabel(); render();
+        });
+      }
+
+      // Rectangle tool button
+      const rectBtn = document.getElementById('rectBtn');
+      if (rectBtn) {
+        rectBtn.addEventListener('click', () => {
+          state.rectMode = !state.rectMode;
+          if (state.rectMode) {
+            state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.ellipseMode = false;
+            state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null;
+          }
+          updateModeLabel(); render();
+        });
+      }
+
+      // Ellipse tool button
+      const ellipseBtn = document.getElementById('ellipseBtn');
+      if (ellipseBtn) {
+        ellipseBtn.addEventListener('click', () => {
+          state.ellipseMode = !state.ellipseMode;
+          if (state.ellipseMode) {
+            state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false;
+            state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null;
           }
           updateModeLabel(); render();
         });

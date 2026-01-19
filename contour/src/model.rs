@@ -30,6 +30,17 @@ pub struct Shape {
     pub fill_rule: FillRule,
 }
 
+/// Result from creating a primitive (rectangle, ellipse, etc.)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PrimitiveResult {
+    /// Node IDs created for this primitive
+    pub nodes: Vec<u32>,
+    /// Edge IDs created for this primitive
+    pub edges: Vec<u32>,
+    /// Shape ID created for this primitive
+    pub shape: u32,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct FillState {
     pub filled: bool,

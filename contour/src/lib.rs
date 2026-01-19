@@ -26,8 +26,8 @@ mod svg;
 use layers::LayerSystem;
 use model::{
     Color, ColorStop, Edge, EdgeKind, FillRule, FillState, FontStyle, Gradient, GradientId,
-    GradientUnits, HandleMode, LayerId, LinearGradient, Node, Paint, RadialGradient, Shape,
-    SpreadMethod, TextAlign, TextElement, TextId, TextStyle, TextType, Vec2, VerticalAlign,
+    GradientUnits, HandleMode, LayerId, LinearGradient, Node, Paint, PrimitiveResult, RadialGradient,
+    Shape, SpreadMethod, TextAlign, TextElement, TextId, TextStyle, TextType, Vec2, VerticalAlign,
     TextOverflow,
 };
 use serde::{Deserialize, Serialize};
@@ -1179,6 +1179,197 @@ impl Graph {
             }
         }
         created_edges
+    }
+
+    /// Create a rectangle primitive that decomposes into nodes and edges.
+    ///
+    /// Arguments:
+    /// - `x`, `y`: Top-left corner position
+    /// - `w`, `h`: Width and height
+    /// - `r`: Corner radius (0 for sharp corners)
+    ///
+    /// Returns a `PrimitiveResult` containing the created nodes, edges, and shape.
+    pub fn add_rectangle(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32) -> PrimitiveResult {
+        let r = r.abs().min(w.abs() / 2.0).min(h.abs() / 2.0);
+        let mut node_ids = Vec::new();
+        let mut edge_ids = Vec::new();
+
+        if r <= geometry::tolerance::EPS_LEN {
+            // Sharp corners: 4 nodes at corners, 4 line edges
+            let n0 = self.add_node(x, y);         // top-left
+            let n1 = self.add_node(x + w, y);     // top-right
+            let n2 = self.add_node(x + w, y + h); // bottom-right
+            let n3 = self.add_node(x, y + h);     // bottom-left
+            node_ids = vec![n0, n1, n2, n3];
+
+            // Create edges: top, right, bottom, left
+            if let Some(e0) = self.add_edge(n0, n1) { edge_ids.push(e0); }
+            if let Some(e1) = self.add_edge(n1, n2) { edge_ids.push(e1); }
+            if let Some(e2) = self.add_edge(n2, n3) { edge_ids.push(e2); }
+            if let Some(e3) = self.add_edge(n3, n0) { edge_ids.push(e3); }
+        } else {
+            // Rounded corners: 8 nodes (arc endpoints), 4 line edges + 4 cubic quarter-arcs
+            // Kappa for circular arc approximation
+            const KAPPA: f32 = 0.5522847498;
+            let k = KAPPA * r;
+
+            // Arc endpoint nodes (clockwise from top-left arc end)
+            // Top edge: from (x+r, y) to (x+w-r, y)
+            let n0 = self.add_node(x + r, y);         // top-left arc end (top side)
+            let n1 = self.add_node(x + w - r, y);     // top-right arc start (top side)
+            // Right edge: from (x+w, y+r) to (x+w, y+h-r)
+            let n2 = self.add_node(x + w, y + r);     // top-right arc end (right side)
+            let n3 = self.add_node(x + w, y + h - r); // bottom-right arc start (right side)
+            // Bottom edge: from (x+w-r, y+h) to (x+r, y+h)
+            let n4 = self.add_node(x + w - r, y + h); // bottom-right arc end (bottom side)
+            let n5 = self.add_node(x + r, y + h);     // bottom-left arc start (bottom side)
+            // Left edge: from (x, y+h-r) to (x, y+r)
+            let n6 = self.add_node(x, y + h - r);     // bottom-left arc end (left side)
+            let n7 = self.add_node(x, y + r);         // top-left arc start (left side)
+
+            node_ids = vec![n0, n1, n2, n3, n4, n5, n6, n7];
+
+            // Line edges (straight sides)
+            if let Some(e) = self.add_edge(n0, n1) { edge_ids.push(e); } // top
+            if let Some(e) = self.add_edge(n2, n3) { edge_ids.push(e); } // right
+            if let Some(e) = self.add_edge(n4, n5) { edge_ids.push(e); } // bottom
+            if let Some(e) = self.add_edge(n6, n7) { edge_ids.push(e); } // left
+
+            // Corner arcs (cubic bezier approximations)
+            // Top-right corner: n1 -> n2
+            if let Some(e) = self.add_edge(n1, n2) {
+                if let Some(Some(edge)) = self.edges.get_mut(e as usize) {
+                    edge.kind = EdgeKind::Cubic {
+                        ha: Vec2 { x: k, y: 0.0 },
+                        hb: Vec2 { x: 0.0, y: -k },
+                        mode: HandleMode::Free,
+                    };
+                }
+                edge_ids.push(e);
+            }
+            // Bottom-right corner: n3 -> n4
+            if let Some(e) = self.add_edge(n3, n4) {
+                if let Some(Some(edge)) = self.edges.get_mut(e as usize) {
+                    edge.kind = EdgeKind::Cubic {
+                        ha: Vec2 { x: 0.0, y: k },
+                        hb: Vec2 { x: k, y: 0.0 },
+                        mode: HandleMode::Free,
+                    };
+                }
+                edge_ids.push(e);
+            }
+            // Bottom-left corner: n5 -> n6
+            if let Some(e) = self.add_edge(n5, n6) {
+                if let Some(Some(edge)) = self.edges.get_mut(e as usize) {
+                    edge.kind = EdgeKind::Cubic {
+                        ha: Vec2 { x: -k, y: 0.0 },
+                        hb: Vec2 { x: 0.0, y: k },
+                        mode: HandleMode::Free,
+                    };
+                }
+                edge_ids.push(e);
+            }
+            // Top-left corner: n7 -> n0
+            if let Some(e) = self.add_edge(n7, n0) {
+                if let Some(Some(edge)) = self.edges.get_mut(e as usize) {
+                    edge.kind = EdgeKind::Cubic {
+                        ha: Vec2 { x: 0.0, y: -k },
+                        hb: Vec2 { x: -k, y: 0.0 },
+                        mode: HandleMode::Free,
+                    };
+                }
+                edge_ids.push(e);
+            }
+        }
+
+        // Create closed shape from edges
+        let shape_id = self.create_shape(&edge_ids, true).unwrap_or(0);
+
+        PrimitiveResult {
+            nodes: node_ids,
+            edges: edge_ids,
+            shape: shape_id,
+        }
+    }
+
+    /// Create an ellipse primitive that decomposes into nodes and edges.
+    ///
+    /// Arguments:
+    /// - `cx`, `cy`: Center position
+    /// - `rx`, `ry`: Horizontal and vertical radii
+    ///
+    /// Returns a `PrimitiveResult` containing the created nodes, edges, and shape.
+    pub fn add_ellipse(&mut self, cx: f32, cy: f32, rx: f32, ry: f32) -> PrimitiveResult {
+        // Standard 4-cubic approximation with kappa
+        const KAPPA: f32 = 0.5522847498;
+        let kx = KAPPA * rx;
+        let ky = KAPPA * ry;
+
+        // 4 nodes at cardinal points (right, top, left, bottom)
+        let n_right = self.add_node(cx + rx, cy);      // 0 degrees
+        let n_top = self.add_node(cx, cy - ry);        // 90 degrees (up)
+        let n_left = self.add_node(cx - rx, cy);       // 180 degrees
+        let n_bottom = self.add_node(cx, cy + ry);     // 270 degrees (down)
+
+        let node_ids = vec![n_right, n_top, n_left, n_bottom];
+        let mut edge_ids = Vec::new();
+
+        // Quarter 1: right -> top
+        if let Some(e) = self.add_edge(n_right, n_top) {
+            if let Some(Some(edge)) = self.edges.get_mut(e as usize) {
+                edge.kind = EdgeKind::Cubic {
+                    ha: Vec2 { x: 0.0, y: -ky },   // control from right point going up
+                    hb: Vec2 { x: kx, y: 0.0 },    // control from top point going right
+                    mode: HandleMode::Free,
+                };
+            }
+            edge_ids.push(e);
+        }
+
+        // Quarter 2: top -> left
+        if let Some(e) = self.add_edge(n_top, n_left) {
+            if let Some(Some(edge)) = self.edges.get_mut(e as usize) {
+                edge.kind = EdgeKind::Cubic {
+                    ha: Vec2 { x: -kx, y: 0.0 },   // control from top point going left
+                    hb: Vec2 { x: 0.0, y: -ky },   // control from left point going up
+                    mode: HandleMode::Free,
+                };
+            }
+            edge_ids.push(e);
+        }
+
+        // Quarter 3: left -> bottom
+        if let Some(e) = self.add_edge(n_left, n_bottom) {
+            if let Some(Some(edge)) = self.edges.get_mut(e as usize) {
+                edge.kind = EdgeKind::Cubic {
+                    ha: Vec2 { x: 0.0, y: ky },    // control from left point going down
+                    hb: Vec2 { x: -kx, y: 0.0 },   // control from bottom point going left
+                    mode: HandleMode::Free,
+                };
+            }
+            edge_ids.push(e);
+        }
+
+        // Quarter 4: bottom -> right
+        if let Some(e) = self.add_edge(n_bottom, n_right) {
+            if let Some(Some(edge)) = self.edges.get_mut(e as usize) {
+                edge.kind = EdgeKind::Cubic {
+                    ha: Vec2 { x: kx, y: 0.0 },    // control from bottom point going right
+                    hb: Vec2 { x: 0.0, y: ky },    // control from right point going down
+                    mode: HandleMode::Free,
+                };
+            }
+            edge_ids.push(e);
+        }
+
+        // Create closed shape from edges
+        let shape_id = self.create_shape(&edge_ids, true).unwrap_or(0);
+
+        PrimitiveResult {
+            nodes: node_ids,
+            edges: edge_ids,
+            shape: shape_id,
+        }
     }
 
     // Regions & fills

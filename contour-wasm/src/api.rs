@@ -617,6 +617,81 @@ impl Graph {
         error::ok(crate::interop::arr_u32(&edges).into())
     }
 
+    // ========== Primitive Shapes ==========
+
+    /// Create a rectangle primitive
+    /// Returns { nodes: [...], edges: [...], shape: id }
+    pub fn add_rectangle(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32) -> JsValue {
+        let result = self.inner.add_rectangle(x, y, w, h, r);
+        serde_wasm_bindgen::to_value(&serde_json::json!({
+            "nodes": result.nodes,
+            "edges": result.edges,
+            "shape": result.shape
+        }))
+        .unwrap()
+    }
+
+    pub fn add_rectangle_res(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32) -> JsValue {
+        for (n, v) in [("x", x), ("y", y), ("w", w), ("h", h), ("r", r)] {
+            if !v.is_finite() {
+                return error::non_finite(n);
+            }
+        }
+        if w <= 0.0 {
+            return error::out_of_range("w", 0.0, f32::INFINITY, w);
+        }
+        if h <= 0.0 {
+            return error::out_of_range("h", 0.0, f32::INFINITY, h);
+        }
+        if r < 0.0 {
+            return error::out_of_range("r", 0.0, f32::INFINITY, r);
+        }
+        let result = self.inner.add_rectangle(x, y, w, h, r);
+        error::ok(
+            serde_wasm_bindgen::to_value(&serde_json::json!({
+                "nodes": result.nodes,
+                "edges": result.edges,
+                "shape": result.shape
+            }))
+            .unwrap(),
+        )
+    }
+
+    /// Create an ellipse primitive
+    /// Returns { nodes: [...], edges: [...], shape: id }
+    pub fn add_ellipse(&mut self, cx: f32, cy: f32, rx: f32, ry: f32) -> JsValue {
+        let result = self.inner.add_ellipse(cx, cy, rx, ry);
+        serde_wasm_bindgen::to_value(&serde_json::json!({
+            "nodes": result.nodes,
+            "edges": result.edges,
+            "shape": result.shape
+        }))
+        .unwrap()
+    }
+
+    pub fn add_ellipse_res(&mut self, cx: f32, cy: f32, rx: f32, ry: f32) -> JsValue {
+        for (n, v) in [("cx", cx), ("cy", cy), ("rx", rx), ("ry", ry)] {
+            if !v.is_finite() {
+                return error::non_finite(n);
+            }
+        }
+        if rx <= 0.0 {
+            return error::out_of_range("rx", 0.0, f32::INFINITY, rx);
+        }
+        if ry <= 0.0 {
+            return error::out_of_range("ry", 0.0, f32::INFINITY, ry);
+        }
+        let result = self.inner.add_ellipse(cx, cy, rx, ry);
+        error::ok(
+            serde_wasm_bindgen::to_value(&serde_json::json!({
+                "nodes": result.nodes,
+                "edges": result.edges,
+                "shape": result.shape
+            }))
+            .unwrap(),
+        )
+    }
+
     // ========== Layer Management ==========
 
     /// Create a new layer, returns layer ID

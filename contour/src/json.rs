@@ -2,8 +2,9 @@ use crate::geometry::limits;
 use crate::layers::LayerSystem;
 use crate::{
     model::{
-        Color, FillState, FontStyle, Gradient, GradientId, Group, HandleMode, Layer, LayerId,
-        TextAlign, TextElement, TextId, TextOverflow, TextStyle, TextType, Vec2, VerticalAlign,
+        Color, Effect, EffectId, EffectStack, FillState, FontStyle, Gradient, GradientId, Group,
+        HandleMode, Layer, LayerId, TextAlign, TextElement, TextId, TextOverflow, TextStyle,
+        TextType, Vec2, VerticalAlign,
     },
     Graph,
 };
@@ -74,6 +75,19 @@ pub fn to_json_impl(g: &Graph) -> Value {
         gradient: Gradient,
     }
     #[derive(Serialize)]
+    struct EffectSer {
+        id: EffectId,
+        #[serde(flatten)]
+        effect: Effect,
+    }
+    #[derive(Serialize)]
+    struct EffectBindingSer {
+        target_type: String,
+        target_id: u32,
+        effects: Vec<EffectId>,
+        enabled: bool,
+    }
+    #[derive(Serialize)]
     struct Doc {
         version: u32,
         nodes: Vec<NodeSer>,
@@ -83,6 +97,8 @@ pub fn to_json_impl(g: &Graph) -> Value {
         groups: Vec<GroupSer>,
         gradients: Vec<GradientSer>,
         texts: Vec<TextElement>,
+        effects: Vec<EffectSer>,
+        effect_bindings: Vec<EffectBindingSer>,
     }
     let mut nodes = Vec::new();
     for (i, n) in g.nodes.iter().enumerate() {
@@ -172,8 +188,59 @@ pub fn to_json_impl(g: &Graph) -> Value {
         .iter()
         .filter_map(|t| t.clone())
         .collect();
+    // Serialize effects
+    let effects: Vec<EffectSer> = g
+        .effects
+        .iter()
+        .map(|(id, effect)| EffectSer {
+            id: *id,
+            effect: effect.clone(),
+        })
+        .collect();
+    // Serialize effect bindings
+    let mut effect_bindings: Vec<EffectBindingSer> = Vec::new();
+    for (id, stack) in &g.shape_effects {
+        if !stack.effects.is_empty() {
+            effect_bindings.push(EffectBindingSer {
+                target_type: "shape".to_string(),
+                target_id: *id,
+                effects: stack.effects.clone(),
+                enabled: stack.enabled,
+            });
+        }
+    }
+    for (id, stack) in &g.region_effects {
+        if !stack.effects.is_empty() {
+            effect_bindings.push(EffectBindingSer {
+                target_type: "region".to_string(),
+                target_id: *id,
+                effects: stack.effects.clone(),
+                enabled: stack.enabled,
+            });
+        }
+    }
+    for (id, stack) in &g.text_effects {
+        if !stack.effects.is_empty() {
+            effect_bindings.push(EffectBindingSer {
+                target_type: "text".to_string(),
+                target_id: *id,
+                effects: stack.effects.clone(),
+                enabled: stack.enabled,
+            });
+        }
+    }
+    for (id, stack) in &g.group_effects {
+        if !stack.effects.is_empty() {
+            effect_bindings.push(EffectBindingSer {
+                target_type: "group".to_string(),
+                target_id: *id,
+                effects: stack.effects.clone(),
+                enabled: stack.enabled,
+            });
+        }
+    }
     serde_json::to_value(Doc {
-        version: 3,
+        version: 4,
         nodes,
         edges,
         fills,
@@ -181,6 +248,8 @@ pub fn to_json_impl(g: &Graph) -> Value {
         groups,
         gradients,
         texts,
+        effects,
+        effect_bindings,
     })
     .unwrap()
 }
@@ -249,6 +318,19 @@ pub fn from_json_impl(g: &mut Graph, v: Value) -> bool {
         gradient: Gradient,
     }
     #[derive(Deserialize)]
+    struct EffectDe {
+        id: EffectId,
+        #[serde(flatten)]
+        effect: Effect,
+    }
+    #[derive(Deserialize)]
+    struct EffectBindingDe {
+        target_type: String,
+        target_id: u32,
+        effects: Vec<EffectId>,
+        enabled: bool,
+    }
+    #[derive(Deserialize)]
     struct DocDe {
         version: Option<u32>,
         nodes: Vec<NodeDe>,
@@ -258,6 +340,8 @@ pub fn from_json_impl(g: &mut Graph, v: Value) -> bool {
         groups: Option<Vec<GroupDe>>,
         gradients: Option<Vec<GradientDe>>,
         texts: Option<Vec<TextElement>>,
+        effects: Option<Vec<EffectDe>>,
+        effect_bindings: Option<Vec<EffectBindingDe>>,
     }
     let parsed: Result<DocDe, _> = serde_json::from_value(v);
     if let Ok(doc) = parsed {
@@ -449,6 +533,37 @@ pub fn from_json_impl(g: &mut Graph, v: Value) -> bool {
             }
         }
 
+        // Load effects if present (v4 format)
+        g.effects.clear();
+        g.shape_effects.clear();
+        g.region_effects.clear();
+        g.text_effects.clear();
+        g.group_effects.clear();
+        if let Some(effects) = doc.effects {
+            let max_effect_id = effects.iter().map(|e| e.id).max().unwrap_or(0);
+            g.next_effect_id = max_effect_id + 1;
+            for e in effects {
+                g.effects.insert(e.id, e.effect);
+            }
+        } else {
+            g.next_effect_id = 0;
+        }
+        if let Some(bindings) = doc.effect_bindings {
+            for b in bindings {
+                let stack = EffectStack {
+                    effects: b.effects,
+                    enabled: b.enabled,
+                };
+                match b.target_type.as_str() {
+                    "shape" => { g.shape_effects.insert(b.target_id, stack); }
+                    "region" => { g.region_effects.insert(b.target_id, stack); }
+                    "text" => { g.text_effects.insert(b.target_id, stack); }
+                    "group" => { g.group_effects.insert(b.target_id, stack); }
+                    _ => {}
+                }
+            }
+        }
+
         g.geom_ver = g.geom_ver.wrapping_add(1);
         true
     } else {
@@ -521,6 +636,19 @@ pub fn from_json_impl_strict(g: &mut Graph, v: Value) -> Result<bool, (&'static 
         gradient: Gradient,
     }
     #[derive(Deserialize)]
+    struct EffectDe {
+        id: EffectId,
+        #[serde(flatten)]
+        effect: Effect,
+    }
+    #[derive(Deserialize)]
+    struct EffectBindingDe {
+        target_type: String,
+        target_id: u32,
+        effects: Vec<EffectId>,
+        enabled: bool,
+    }
+    #[derive(Deserialize)]
     struct DocDe {
         version: Option<u32>,
         nodes: Vec<NodeDe>,
@@ -530,6 +658,8 @@ pub fn from_json_impl_strict(g: &mut Graph, v: Value) -> Result<bool, (&'static 
         groups: Option<Vec<GroupDe>>,
         gradients: Option<Vec<GradientDe>>,
         texts: Option<Vec<TextElement>>,
+        effects: Option<Vec<EffectDe>>,
+        effect_bindings: Option<Vec<EffectBindingDe>>,
     }
     let doc: DocDe = serde_json::from_value(v).map_err(|e| ("json_parse", format!("{}", e)))?;
     if doc.nodes.len() > limits::MAX_NODES {
@@ -724,6 +854,37 @@ pub fn from_json_impl_strict(g: &mut Graph, v: Value) -> Result<bool, (&'static 
             let idx = t.id as usize;
             if idx < g.texts.len() {
                 g.texts[idx] = Some(t);
+            }
+        }
+    }
+
+    // Load effects if present (v4 format)
+    g.effects.clear();
+    g.shape_effects.clear();
+    g.region_effects.clear();
+    g.text_effects.clear();
+    g.group_effects.clear();
+    if let Some(effects) = doc.effects {
+        let max_effect_id = effects.iter().map(|e| e.id).max().unwrap_or(0);
+        g.next_effect_id = max_effect_id + 1;
+        for e in effects {
+            g.effects.insert(e.id, e.effect);
+        }
+    } else {
+        g.next_effect_id = 0;
+    }
+    if let Some(bindings) = doc.effect_bindings {
+        for b in bindings {
+            let stack = EffectStack {
+                effects: b.effects,
+                enabled: b.enabled,
+            };
+            match b.target_type.as_str() {
+                "shape" => { g.shape_effects.insert(b.target_id, stack); }
+                "region" => { g.region_effects.insert(b.target_id, stack); }
+                "text" => { g.text_effects.insert(b.target_id, stack); }
+                "group" => { g.group_effects.insert(b.target_id, stack); }
+                _ => {}
             }
         }
     }

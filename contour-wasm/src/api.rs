@@ -2349,6 +2349,291 @@ impl Graph {
             "truncated": layout.truncated
         })).unwrap_or(JsValue::NULL))
     }
+
+    // ========== Effects System ==========
+
+    /// Add a drop shadow effect, returns effect ID
+    pub fn add_drop_shadow(
+        &mut self,
+        offset_x: f32,
+        offset_y: f32,
+        blur_radius: f32,
+        spread_radius: f32,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    ) -> u32 {
+        self.inner.add_drop_shadow(
+            offset_x,
+            offset_y,
+            blur_radius,
+            spread_radius,
+            contour::model::Color { r, g, b, a },
+        )
+    }
+
+    pub fn add_drop_shadow_res(
+        &mut self,
+        offset_x: f32,
+        offset_y: f32,
+        blur_radius: f32,
+        spread_radius: f32,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    ) -> JsValue {
+        for (n, v) in [
+            ("offset_x", offset_x),
+            ("offset_y", offset_y),
+            ("blur_radius", blur_radius),
+            ("spread_radius", spread_radius),
+        ] {
+            if !v.is_finite() {
+                return error::non_finite(n);
+            }
+        }
+        if blur_radius < 0.0 {
+            return error::out_of_range("blur_radius", 0.0, f32::INFINITY, blur_radius);
+        }
+        if spread_radius < 0.0 {
+            return error::out_of_range("spread_radius", 0.0, f32::INFINITY, spread_radius);
+        }
+        let id = self.inner.add_drop_shadow(
+            offset_x,
+            offset_y,
+            blur_radius,
+            spread_radius,
+            contour::model::Color { r, g, b, a },
+        );
+        error::ok(JsValue::from_f64(id as f64))
+    }
+
+    /// Get an effect by ID as JSON
+    pub fn get_effect(&self, id: u32) -> JsValue {
+        match self.inner.get_effect(id) {
+            Some(effect) => serde_wasm_bindgen::to_value(effect).unwrap_or(JsValue::NULL),
+            None => JsValue::NULL,
+        }
+    }
+
+    pub fn get_effect_res(&self, id: u32) -> JsValue {
+        match self.inner.get_effect(id) {
+            Some(effect) => error::ok(serde_wasm_bindgen::to_value(effect).unwrap_or(JsValue::NULL)),
+            None => error::invalid_id("effect", id),
+        }
+    }
+
+    /// Update a drop shadow effect
+    pub fn update_drop_shadow(
+        &mut self,
+        id: u32,
+        offset_x: f32,
+        offset_y: f32,
+        blur_radius: f32,
+        spread_radius: f32,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    ) -> bool {
+        let effect = contour::model::Effect::DropShadow(contour::model::DropShadow {
+            offset_x,
+            offset_y,
+            blur_radius,
+            spread_radius,
+            color: contour::model::Color { r, g, b, a },
+        });
+        self.inner.update_effect(id, effect)
+    }
+
+    pub fn update_drop_shadow_res(
+        &mut self,
+        id: u32,
+        offset_x: f32,
+        offset_y: f32,
+        blur_radius: f32,
+        spread_radius: f32,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    ) -> JsValue {
+        if self.inner.get_effect(id).is_none() {
+            return error::invalid_id("effect", id);
+        }
+        for (n, v) in [
+            ("offset_x", offset_x),
+            ("offset_y", offset_y),
+            ("blur_radius", blur_radius),
+            ("spread_radius", spread_radius),
+        ] {
+            if !v.is_finite() {
+                return error::non_finite(n);
+            }
+        }
+        if blur_radius < 0.0 {
+            return error::out_of_range("blur_radius", 0.0, f32::INFINITY, blur_radius);
+        }
+        let effect = contour::model::Effect::DropShadow(contour::model::DropShadow {
+            offset_x,
+            offset_y,
+            blur_radius,
+            spread_radius,
+            color: contour::model::Color { r, g, b, a },
+        });
+        error::ok(JsValue::from_bool(self.inner.update_effect(id, effect)))
+    }
+
+    /// Remove an effect (also removes from all assignments)
+    pub fn remove_effect(&mut self, id: u32) -> bool {
+        self.inner.remove_effect(id)
+    }
+
+    pub fn remove_effect_res(&mut self, id: u32) -> JsValue {
+        if self.inner.get_effect(id).is_none() {
+            return error::invalid_id("effect", id);
+        }
+        error::ok(JsValue::from_bool(self.inner.remove_effect(id)))
+    }
+
+    /// Get all effect IDs
+    pub fn get_effect_ids(&self) -> Uint32Array {
+        let ids = self.inner.effect_ids();
+        crate::interop::arr_u32(&ids)
+    }
+
+    // --- Shape effects ---
+
+    /// Add an effect to a shape
+    pub fn add_effect_to_shape(&mut self, shape_id: u32, effect_id: u32) -> bool {
+        self.inner.add_effect_to_shape(shape_id, effect_id)
+    }
+
+    pub fn add_effect_to_shape_res(&mut self, shape_id: u32, effect_id: u32) -> JsValue {
+        if self.inner.get_effect(effect_id).is_none() {
+            return error::invalid_id("effect", effect_id);
+        }
+        error::ok(JsValue::from_bool(self.inner.add_effect_to_shape(shape_id, effect_id)))
+    }
+
+    /// Remove an effect from a shape
+    pub fn remove_effect_from_shape(&mut self, shape_id: u32, effect_id: u32) -> bool {
+        self.inner.remove_effect_from_shape(shape_id, effect_id)
+    }
+
+    /// Get a shape's effect stack as JSON
+    pub fn get_shape_effects(&self, shape_id: u32) -> JsValue {
+        match self.inner.get_shape_effects(shape_id) {
+            Some(stack) => serde_wasm_bindgen::to_value(stack).unwrap_or(JsValue::NULL),
+            None => JsValue::NULL,
+        }
+    }
+
+    /// Set shape effects enabled state
+    pub fn set_shape_effects_enabled(&mut self, shape_id: u32, enabled: bool) -> bool {
+        self.inner.set_shape_effects_enabled(shape_id, enabled)
+    }
+
+    // --- Region effects ---
+
+    /// Add an effect to a region
+    pub fn add_effect_to_region(&mut self, region_key: u32, effect_id: u32) -> bool {
+        self.inner.add_effect_to_region(region_key, effect_id)
+    }
+
+    pub fn add_effect_to_region_res(&mut self, region_key: u32, effect_id: u32) -> JsValue {
+        if self.inner.get_effect(effect_id).is_none() {
+            return error::invalid_id("effect", effect_id);
+        }
+        error::ok(JsValue::from_bool(self.inner.add_effect_to_region(region_key, effect_id)))
+    }
+
+    /// Remove an effect from a region
+    pub fn remove_effect_from_region(&mut self, region_key: u32, effect_id: u32) -> bool {
+        self.inner.remove_effect_from_region(region_key, effect_id)
+    }
+
+    /// Get a region's effect stack as JSON
+    pub fn get_region_effects(&self, region_key: u32) -> JsValue {
+        match self.inner.get_region_effects(region_key) {
+            Some(stack) => serde_wasm_bindgen::to_value(stack).unwrap_or(JsValue::NULL),
+            None => JsValue::NULL,
+        }
+    }
+
+    /// Set region effects enabled state
+    pub fn set_region_effects_enabled(&mut self, region_key: u32, enabled: bool) -> bool {
+        self.inner.set_region_effects_enabled(region_key, enabled)
+    }
+
+    // --- Text effects ---
+
+    /// Add an effect to a text element
+    pub fn add_effect_to_text(&mut self, text_id: u32, effect_id: u32) -> bool {
+        self.inner.add_effect_to_text(text_id, effect_id)
+    }
+
+    pub fn add_effect_to_text_res(&mut self, text_id: u32, effect_id: u32) -> JsValue {
+        if self.inner.get_effect(effect_id).is_none() {
+            return error::invalid_id("effect", effect_id);
+        }
+        if self.inner.get_text(text_id).is_none() {
+            return error::invalid_id("text", text_id);
+        }
+        error::ok(JsValue::from_bool(self.inner.add_effect_to_text(text_id, effect_id)))
+    }
+
+    /// Remove an effect from a text element
+    pub fn remove_effect_from_text(&mut self, text_id: u32, effect_id: u32) -> bool {
+        self.inner.remove_effect_from_text(text_id, effect_id)
+    }
+
+    /// Get a text element's effect stack as JSON
+    pub fn get_text_effects(&self, text_id: u32) -> JsValue {
+        match self.inner.get_text_effects(text_id) {
+            Some(stack) => serde_wasm_bindgen::to_value(stack).unwrap_or(JsValue::NULL),
+            None => JsValue::NULL,
+        }
+    }
+
+    /// Set text effects enabled state
+    pub fn set_text_effects_enabled(&mut self, text_id: u32, enabled: bool) -> bool {
+        self.inner.set_text_effects_enabled(text_id, enabled)
+    }
+
+    // --- Group effects ---
+
+    /// Add an effect to a group
+    pub fn add_effect_to_group(&mut self, group_id: u32, effect_id: u32) -> bool {
+        self.inner.add_effect_to_group(group_id, effect_id)
+    }
+
+    pub fn add_effect_to_group_res(&mut self, group_id: u32, effect_id: u32) -> JsValue {
+        if self.inner.get_effect(effect_id).is_none() {
+            return error::invalid_id("effect", effect_id);
+        }
+        error::ok(JsValue::from_bool(self.inner.add_effect_to_group(group_id, effect_id)))
+    }
+
+    /// Remove an effect from a group
+    pub fn remove_effect_from_group(&mut self, group_id: u32, effect_id: u32) -> bool {
+        self.inner.remove_effect_from_group(group_id, effect_id)
+    }
+
+    /// Get a group's effect stack as JSON
+    pub fn get_group_effects(&self, group_id: u32) -> JsValue {
+        match self.inner.get_group_effects(group_id) {
+            Some(stack) => serde_wasm_bindgen::to_value(stack).unwrap_or(JsValue::NULL),
+            None => JsValue::NULL,
+        }
+    }
+
+    /// Set group effects enabled state
+    pub fn set_group_effects_enabled(&mut self, group_id: u32, enabled: bool) -> bool {
+        self.inner.set_group_effects_enabled(group_id, enabled)
+    }
 }
 
 fn to_pairs(arr: &Float32Array) -> Vec<(f32, f32)> {

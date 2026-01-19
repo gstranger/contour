@@ -1331,8 +1331,8 @@
         const blur = parseFloat(document.getElementById('effectBlur').value) || 0;
         const colorHex = document.getElementById('effectColor').value;
         const opacity = parseInt(document.getElementById('effectOpacity').value) || 128;
-        const rgb = hexToRgb(colorHex);
-        g.update_drop_shadow(state.selectedEffectId, offsetX, offsetY, blur, 0, rgb.r, rgb.g, rgb.b, opacity);
+        const [r, gc, b] = hexToRgb(colorHex);
+        g.update_drop_shadow(state.selectedEffectId, offsetX, offsetY, blur, 0, r, gc, b, opacity);
 
         document.getElementById('effectOffsetXVal').textContent = Math.round(offsetX);
         document.getElementById('effectOffsetYVal').textContent = Math.round(offsetY);
@@ -1355,11 +1355,6 @@
         }
         render();
       });
-
-      function hexToRgb(hex) {
-        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-        return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : { r: 0, g: 0, b: 0 };
-      }
 
       // Regions: recompute at most once per animation frame
       state.scheduledRegion = false;

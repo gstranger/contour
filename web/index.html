@@ -34,6 +34,8 @@
           <button id="textBtn" title="Text tool (T)">Text</button>
           <button id="rectBtn" title="Rectangle tool (U)">Rect</button>
           <button id="ellipseBtn" title="Ellipse tool (O)">Ellipse</button>
+          <button id="polygonBtn" title="Polygon tool (G)">Polygon</button>
+          <button id="starBtn" title="Star tool (*)">Star</button>
           <button id="refBtn" title="Toggle reference SVG overlay (R)">Ref</button>
         </div>
         <div id="boolToolbar" style="display:flex; gap:6px; align-items:center; border:1px solid #e2e2e2; border-radius:8px; padding:6px; background:#fff;">
@@ -101,6 +103,28 @@
           <div id="shapeList" style="font-size:11px; color:#333;"></div>
           <div class="hint">Click shapes to select (up to 2 for boolean ops)</div>
         </div>
+        <div id="primitiveSettings" style="padding:10px; display:none; flex-direction:column; gap:10px; background:#fff; border-top:1px solid #eee;">
+          <div style="font-size:12px; color:#555;">Shape Settings</div>
+          <div id="polygonSettings" style="display:none;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label style="width:56px; font-size:12px;">Sides</label>
+              <input type="range" id="polygonSidesInput" min="3" max="12" value="6" style="flex:1;">
+              <span id="polygonSidesVal" style="width:24px; font-size:12px;">6</span>
+            </div>
+          </div>
+          <div id="starSettings" style="display:none;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label style="width:56px; font-size:12px;">Points</label>
+              <input type="range" id="starPointsInput" min="3" max="12" value="5" style="flex:1;">
+              <span id="starPointsVal" style="width:24px; font-size:12px;">5</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+              <label style="width:56px; font-size:12px;">Inner %</label>
+              <input type="range" id="starInnerInput" min="10" max="90" step="5" value="50" style="flex:1;">
+              <span id="starInnerVal" style="width:32px; font-size:12px;">50%</span>
+            </div>
+          </div>
+        </div>
       </aside>
     </div>
 
@@ -157,6 +181,11 @@
         // Primitive shape tools
         rectMode: false,
         ellipseMode: false,
+        polygonMode: false,
+        starMode: false,
+        polygonSides: 6,      // Default hexagon
+        starPoints: 5,        // Default 5-point star
+        starInnerRatio: 0.5,  // Inner radius as ratio of outer
         primitiveStart: null, // [x, y] drag start
         primitiveCurrent: null, // [x, y] current drag position
         // Shape/Boolean state
@@ -177,14 +206,25 @@
         else if (state.textMode) mode = 'Text';
         else if (state.rectMode) mode = 'Rectangle';
         else if (state.ellipseMode) mode = 'Ellipse';
+        else if (state.polygonMode) mode = 'Polygon (' + state.polygonSides + ')';
+        else if (state.starMode) mode = 'Star (' + state.starPoints + ')';
         modeLabel.textContent = 'Mode: ' + mode;
-        canvas.style.cursor = state.bucket ? 'cell' : (state.bend ? 'crosshair' : (state.pen ? 'crosshair' : (state.textMode ? 'text' : ((state.rectMode || state.ellipseMode) ? 'crosshair' : 'default'))));
+        canvas.style.cursor = state.bucket ? 'cell' : (state.bend ? 'crosshair' : (state.pen ? 'crosshair' : (state.textMode ? 'text' : ((state.rectMode || state.ellipseMode || state.polygonMode || state.starMode) ? 'crosshair' : 'default'))));
         document.getElementById('bucketBtn').classList.toggle('active', state.bucket);
         const bendBtn = document.getElementById('bendBtn'); if (bendBtn) bendBtn.classList.toggle('active', state.bend);
         const penBtn = document.getElementById('penBtn'); if (penBtn) penBtn.classList.toggle('active', state.pen);
         const textBtn = document.getElementById('textBtn'); if (textBtn) textBtn.classList.toggle('active', state.textMode);
         const rectBtn = document.getElementById('rectBtn'); if (rectBtn) rectBtn.classList.toggle('active', state.rectMode);
         const ellipseBtn = document.getElementById('ellipseBtn'); if (ellipseBtn) ellipseBtn.classList.toggle('active', state.ellipseMode);
+        const polygonBtn = document.getElementById('polygonBtn'); if (polygonBtn) polygonBtn.classList.toggle('active', state.polygonMode);
+        const starBtn = document.getElementById('starBtn'); if (starBtn) starBtn.classList.toggle('active', state.starMode);
+        // Show/hide primitive settings panel
+        const primitiveSettings = document.getElementById('primitiveSettings');
+        const polygonSettings = document.getElementById('polygonSettings');
+        const starSettings = document.getElementById('starSettings');
+        if (primitiveSettings) primitiveSettings.style.display = (state.polygonMode || state.starMode) ? 'flex' : 'none';
+        if (polygonSettings) polygonSettings.style.display = state.polygonMode ? 'block' : 'none';
+        if (starSettings) starSettings.style.display = state.starMode ? 'block' : 'none';
         // Show/hide text properties panel
         const textProps = document.getElementById('textProps');
         const shapeProps = document.getElementById('shapeProps');
@@ -543,6 +583,55 @@
           const ry = Math.abs(cy - sy) / 2;
           ctx.beginPath();
           ctx.ellipse(centerX, centerY, rx, ry, 0, 0, Math.PI * 2);
+          ctx.strokeStyle = '#ff9800';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 6]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // Polygon preview
+        if (state.polygonMode && state.primitiveStart && state.primitiveCurrent) {
+          const [cx, cy] = state.primitiveStart;
+          const [ex, ey] = state.primitiveCurrent;
+          const r = Math.hypot(ex - cx, ey - cy);
+          const rotation = Math.atan2(ey - cy, ex - cx);
+          const sides = state.polygonSides;
+          ctx.beginPath();
+          for (let i = 0; i <= sides; i++) {
+            const angle = rotation + (2 * Math.PI * i) / sides;
+            const x = cx + r * Math.cos(angle);
+            const y = cy + r * Math.sin(angle);
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.closePath();
+          ctx.strokeStyle = '#ff9800';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 6]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // Star preview
+        if (state.starMode && state.primitiveStart && state.primitiveCurrent) {
+          const [cx, cy] = state.primitiveStart;
+          const [ex, ey] = state.primitiveCurrent;
+          const rOuter = Math.hypot(ex - cx, ey - cy);
+          const rInner = rOuter * state.starInnerRatio;
+          const rotation = Math.atan2(ey - cy, ex - cx);
+          const points = state.starPoints;
+          const totalVerts = points * 2;
+          ctx.beginPath();
+          for (let i = 0; i <= totalVerts; i++) {
+            const angle = rotation + (2 * Math.PI * i) / totalVerts;
+            const radius = (i % 2 === 0) ? rOuter : rInner;
+            const x = cx + radius * Math.cos(angle);
+            const y = cy + radius * Math.sin(angle);
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.closePath();
           ctx.strokeStyle = '#ff9800';
           ctx.lineWidth = 2;
           ctx.setLineDash([6, 6]);
@@ -961,6 +1050,24 @@
           return;
         }
 
+        // Polygon tool: start drag (center at click, drag to set radius and rotation)
+        if (state.polygonMode) {
+          const [sx, sy] = snapPoint(x, y, null);
+          state.primitiveStart = [sx, sy];
+          state.primitiveCurrent = [sx, sy];
+          render();
+          return;
+        }
+
+        // Star tool: start drag (center at click, drag to set radius and rotation)
+        if (state.starMode) {
+          const [sx, sy] = snapPoint(x, y, null);
+          state.primitiveStart = [sx, sy];
+          state.primitiveCurrent = [sx, sy];
+          render();
+          return;
+        }
+
         // Text tool: click to add text or select existing text
         if (state.textMode) {
           // Check if clicking on existing text
@@ -1037,8 +1144,8 @@
 
       window.addEventListener('mousemove', (evt) => {
         const [x, y] = canvasPoint(evt);
-        // Rectangle/Ellipse drag preview
-        if ((state.rectMode || state.ellipseMode) && state.primitiveStart) {
+        // Rectangle/Ellipse/Polygon/Star drag preview
+        if ((state.rectMode || state.ellipseMode || state.polygonMode || state.starMode) && state.primitiveStart) {
           const [sx, sy] = snapPoint(x, y, null);
           state.primitiveCurrent = [sx, sy];
           render();
@@ -1169,6 +1276,53 @@
               }
               scheduleRegions();
             } catch (e) { console.error('Ellipse creation failed:', e); }
+          }
+          render();
+          return;
+        }
+
+        // Finish polygon on mouseup
+        if (state.polygonMode && state.primitiveStart) {
+          const [cx, cy] = state.primitiveStart;
+          const [ex, ey] = snapPoint(x, y, null);
+          state.primitiveStart = null;
+          state.primitiveCurrent = null;
+          const r = Math.hypot(ex - cx, ey - cy);
+          // Only create if there's a meaningful size
+          if (r > 2) {
+            try {
+              const rotation = Math.atan2(ey - cy, ex - cx);
+              const result = g.add_polygon(cx, cy, r, state.polygonSides, rotation);
+              console.log('Created polygon:', result);
+              if (result && result.edges && result.edges.length > 0) {
+                state.selection = { kind: 'edge', id: result.edges[0] };
+              }
+              scheduleRegions();
+            } catch (e) { console.error('Polygon creation failed:', e); }
+          }
+          render();
+          return;
+        }
+
+        // Finish star on mouseup
+        if (state.starMode && state.primitiveStart) {
+          const [cx, cy] = state.primitiveStart;
+          const [ex, ey] = snapPoint(x, y, null);
+          state.primitiveStart = null;
+          state.primitiveCurrent = null;
+          const rOuter = Math.hypot(ex - cx, ey - cy);
+          const rInner = rOuter * state.starInnerRatio;
+          // Only create if there's a meaningful size
+          if (rOuter > 2) {
+            try {
+              const rotation = Math.atan2(ey - cy, ex - cx);
+              const result = g.add_star(cx, cy, rOuter, rInner, state.starPoints, rotation);
+              console.log('Created star:', result);
+              if (result && result.edges && result.edges.length > 0) {
+                state.selection = { kind: 'edge', id: result.edges[0] };
+              }
+              scheduleRegions();
+            } catch (e) { console.error('Star creation failed:', e); }
           }
           render();
           return;
@@ -1552,20 +1706,26 @@
         } else if (evt.key.toLowerCase() === 's') {
           state.snap = !state.snap; updateSnapLabel(); render();
         } else if (evt.key.toLowerCase() === 'f') {
-          state.bucket = !state.bucket; if (state.bucket) { state.pen = false; state.bend = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; } updateModeLabel(); render();
+          state.bucket = !state.bucket; if (state.bucket) { state.pen = false; state.bend = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; state.polygonMode = false; state.starMode = false; } updateModeLabel(); render();
         } else if (evt.key.toLowerCase() === 'b') {
-          state.bend = !state.bend; if (state.bend) { state.pen = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; } updateModeLabel(); render();
+          state.bend = !state.bend; if (state.bend) { state.pen = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; state.polygonMode = false; state.starMode = false; } updateModeLabel(); render();
         } else if (evt.key.toLowerCase() === 'p') {
-          state.pen = !state.pen; if (state.pen) { state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; } else { state.penPath = null; state.penPreview = null; }
+          state.pen = !state.pen; if (state.pen) { state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; state.polygonMode = false; state.starMode = false; } else { state.penPath = null; state.penPreview = null; }
           updateModeLabel(); render();
         } else if (evt.key.toLowerCase() === 't') {
-          state.textMode = !state.textMode; if (state.textMode) { state.pen = false; state.bend = false; state.bucket = false; state.rectMode = false; state.ellipseMode = false; state.penPath = null; state.penPreview = null; }
+          state.textMode = !state.textMode; if (state.textMode) { state.pen = false; state.bend = false; state.bucket = false; state.rectMode = false; state.ellipseMode = false; state.polygonMode = false; state.starMode = false; state.penPath = null; state.penPreview = null; }
           updateModeLabel(); render();
         } else if (evt.key.toLowerCase() === 'u') {
-          state.rectMode = !state.rectMode; if (state.rectMode) { state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.ellipseMode = false; state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null; }
+          state.rectMode = !state.rectMode; if (state.rectMode) { state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.ellipseMode = false; state.polygonMode = false; state.starMode = false; state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null; }
           updateModeLabel(); render();
         } else if (evt.key.toLowerCase() === 'o') {
-          state.ellipseMode = !state.ellipseMode; if (state.ellipseMode) { state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null; }
+          state.ellipseMode = !state.ellipseMode; if (state.ellipseMode) { state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.polygonMode = false; state.starMode = false; state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null; }
+          updateModeLabel(); render();
+        } else if (evt.key.toLowerCase() === 'g') {
+          state.polygonMode = !state.polygonMode; if (state.polygonMode) { state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; state.starMode = false; state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null; }
+          updateModeLabel(); render();
+        } else if (evt.key === '*' || evt.key === '8' && evt.shiftKey) {
+          state.starMode = !state.starMode; if (state.starMode) { state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; state.polygonMode = false; state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null; }
           updateModeLabel(); render();
         } else if (evt.key === 'Enter') {
           if (state.pen && state.penPath) { state.penPath = null; state.penPreview = null; render(); }
@@ -2188,7 +2348,7 @@
       });
 
       const penBtn = document.getElementById('penBtn');
-      if (penBtn) penBtn.addEventListener('click', () => { state.pen = !state.pen; if (state.pen) { state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; } else { state.penPath = null; state.penPreview = null; } updateModeLabel(); render(); });
+      if (penBtn) penBtn.addEventListener('click', () => { state.pen = !state.pen; if (state.pen) { state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; state.polygonMode = false; state.starMode = false; } else { state.penPath = null; state.penPreview = null; } updateModeLabel(); render(); });
       const penModeSel = document.getElementById('penMode');
       if (penModeSel) penModeSel.addEventListener('change', (e) => {
         const v = e.target && e.target.value ? String(e.target.value) : 'points';
@@ -2198,10 +2358,10 @@
         updateModeLabel(); render();
       });
       document.getElementById('bucketBtn').addEventListener('click', () => {
-        state.bucket = !state.bucket; if (state.bucket) { state.pen = false; state.bend = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; } updateModeLabel(); render();
+        state.bucket = !state.bucket; if (state.bucket) { state.pen = false; state.bend = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; state.polygonMode = false; state.starMode = false; } updateModeLabel(); render();
       });
       document.getElementById('bendBtn').addEventListener('click', () => {
-        state.bend = !state.bend; if (state.bend) { state.pen = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; } updateModeLabel(); render();
+        state.bend = !state.bend; if (state.bend) { state.pen = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; state.polygonMode = false; state.starMode = false; } updateModeLabel(); render();
       });
       const refBtn = document.getElementById('refBtn');
       if (refBtn) {
@@ -2218,7 +2378,7 @@
         textBtn.addEventListener('click', () => {
           state.textMode = !state.textMode;
           if (state.textMode) {
-            state.pen = false; state.bend = false; state.bucket = false; state.rectMode = false; state.ellipseMode = false;
+            state.pen = false; state.bend = false; state.bucket = false; state.rectMode = false; state.ellipseMode = false; state.polygonMode = false; state.starMode = false;
             state.penPath = null; state.penPreview = null;
           }
           updateModeLabel(); render();
@@ -2231,7 +2391,7 @@
         rectBtn.addEventListener('click', () => {
           state.rectMode = !state.rectMode;
           if (state.rectMode) {
-            state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.ellipseMode = false;
+            state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.ellipseMode = false; state.polygonMode = false; state.starMode = false;
             state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null;
           }
           updateModeLabel(); render();
@@ -2244,10 +2404,65 @@
         ellipseBtn.addEventListener('click', () => {
           state.ellipseMode = !state.ellipseMode;
           if (state.ellipseMode) {
-            state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false;
+            state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.polygonMode = false; state.starMode = false;
             state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null;
           }
           updateModeLabel(); render();
+        });
+      }
+
+      // Polygon tool button
+      const polygonBtn = document.getElementById('polygonBtn');
+      if (polygonBtn) {
+        polygonBtn.addEventListener('click', () => {
+          state.polygonMode = !state.polygonMode;
+          if (state.polygonMode) {
+            state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; state.starMode = false;
+            state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null;
+          }
+          updateModeLabel(); render();
+        });
+      }
+
+      // Star tool button
+      const starBtn = document.getElementById('starBtn');
+      if (starBtn) {
+        starBtn.addEventListener('click', () => {
+          state.starMode = !state.starMode;
+          if (state.starMode) {
+            state.pen = false; state.bend = false; state.bucket = false; state.textMode = false; state.rectMode = false; state.ellipseMode = false; state.polygonMode = false;
+            state.penPath = null; state.penPreview = null; state.primitiveStart = null; state.primitiveCurrent = null;
+          }
+          updateModeLabel(); render();
+        });
+      }
+
+      // Primitive settings panel handlers
+      const polygonSidesInput = document.getElementById('polygonSidesInput');
+      const polygonSidesVal = document.getElementById('polygonSidesVal');
+      const starPointsInput = document.getElementById('starPointsInput');
+      const starPointsVal = document.getElementById('starPointsVal');
+      const starInnerInput = document.getElementById('starInnerInput');
+      const starInnerVal = document.getElementById('starInnerVal');
+
+      if (polygonSidesInput) {
+        polygonSidesInput.addEventListener('input', () => {
+          state.polygonSides = parseInt(polygonSidesInput.value) || 6;
+          if (polygonSidesVal) polygonSidesVal.textContent = state.polygonSides;
+          updateModeLabel();
+        });
+      }
+      if (starPointsInput) {
+        starPointsInput.addEventListener('input', () => {
+          state.starPoints = parseInt(starPointsInput.value) || 5;
+          if (starPointsVal) starPointsVal.textContent = state.starPoints;
+          updateModeLabel();
+        });
+      }
+      if (starInnerInput) {
+        starInnerInput.addEventListener('input', () => {
+          state.starInnerRatio = (parseInt(starInnerInput.value) || 50) / 100;
+          if (starInnerVal) starInnerVal.textContent = (state.starInnerRatio * 100).toFixed(0) + '%';
         });
       }
 

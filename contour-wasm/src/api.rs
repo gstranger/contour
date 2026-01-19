@@ -692,6 +692,79 @@ impl Graph {
         )
     }
 
+    /// Create a regular polygon primitive
+    /// Returns { nodes: [...], edges: [...], shape: id }
+    pub fn add_polygon(&mut self, cx: f32, cy: f32, r: f32, sides: u32, rotation: f32) -> JsValue {
+        let result = self.inner.add_polygon(cx, cy, r, sides, rotation);
+        serde_wasm_bindgen::to_value(&serde_json::json!({
+            "nodes": result.nodes,
+            "edges": result.edges,
+            "shape": result.shape
+        }))
+        .unwrap()
+    }
+
+    pub fn add_polygon_res(&mut self, cx: f32, cy: f32, r: f32, sides: u32, rotation: f32) -> JsValue {
+        for (n, v) in [("cx", cx), ("cy", cy), ("r", r), ("rotation", rotation)] {
+            if !v.is_finite() {
+                return error::non_finite(n);
+            }
+        }
+        if r <= 0.0 {
+            return error::out_of_range("r", 0.0, f32::INFINITY, r);
+        }
+        if sides < 3 {
+            return error::out_of_range("sides", 3.0, f32::INFINITY, sides as f32);
+        }
+        let result = self.inner.add_polygon(cx, cy, r, sides, rotation);
+        error::ok(
+            serde_wasm_bindgen::to_value(&serde_json::json!({
+                "nodes": result.nodes,
+                "edges": result.edges,
+                "shape": result.shape
+            }))
+            .unwrap(),
+        )
+    }
+
+    /// Create a star primitive
+    /// Returns { nodes: [...], edges: [...], shape: id }
+    pub fn add_star(&mut self, cx: f32, cy: f32, r_outer: f32, r_inner: f32, points: u32, rotation: f32) -> JsValue {
+        let result = self.inner.add_star(cx, cy, r_outer, r_inner, points, rotation);
+        serde_wasm_bindgen::to_value(&serde_json::json!({
+            "nodes": result.nodes,
+            "edges": result.edges,
+            "shape": result.shape
+        }))
+        .unwrap()
+    }
+
+    pub fn add_star_res(&mut self, cx: f32, cy: f32, r_outer: f32, r_inner: f32, points: u32, rotation: f32) -> JsValue {
+        for (n, v) in [("cx", cx), ("cy", cy), ("r_outer", r_outer), ("r_inner", r_inner), ("rotation", rotation)] {
+            if !v.is_finite() {
+                return error::non_finite(n);
+            }
+        }
+        if r_outer <= 0.0 {
+            return error::out_of_range("r_outer", 0.0, f32::INFINITY, r_outer);
+        }
+        if r_inner <= 0.0 {
+            return error::out_of_range("r_inner", 0.0, f32::INFINITY, r_inner);
+        }
+        if points < 3 {
+            return error::out_of_range("points", 3.0, f32::INFINITY, points as f32);
+        }
+        let result = self.inner.add_star(cx, cy, r_outer, r_inner, points, rotation);
+        error::ok(
+            serde_wasm_bindgen::to_value(&serde_json::json!({
+                "nodes": result.nodes,
+                "edges": result.edges,
+                "shape": result.shape
+            }))
+            .unwrap(),
+        )
+    }
+
     // ========== Layer Management ==========
 
     /// Create a new layer, returns layer ID

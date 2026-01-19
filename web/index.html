@@ -125,6 +125,45 @@
             </div>
           </div>
         </div>
+        <div id="effectsPanel" style="padding:10px; display:none; flex-direction:column; gap:10px; background:#fff; border-top:1px solid #eee;">
+          <div style="font-size:12px; color:#555;">Effects</div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <select id="effectTypeSelect" style="flex:1; padding:4px; font-size:11px;">
+              <option value="drop_shadow">Drop Shadow</option>
+            </select>
+            <button id="addEffectBtn" style="font-size:11px; padding:4px 8px;">Add</button>
+          </div>
+          <div id="effectsList" style="font-size:11px;"></div>
+          <div id="effectControls" style="display:none; flex-direction:column; gap:6px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label style="width:56px; font-size:11px;">Offset X</label>
+              <input type="range" id="effectOffsetX" min="-50" max="50" value="4" style="flex:1;">
+              <span id="effectOffsetXVal" style="width:28px; font-size:11px;">4</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label style="width:56px; font-size:11px;">Offset Y</label>
+              <input type="range" id="effectOffsetY" min="-50" max="50" value="4" style="flex:1;">
+              <span id="effectOffsetYVal" style="width:28px; font-size:11px;">4</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label style="width:56px; font-size:11px;">Blur</label>
+              <input type="range" id="effectBlur" min="0" max="50" value="8" style="flex:1;">
+              <span id="effectBlurVal" style="width:28px; font-size:11px;">8</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label style="width:56px; font-size:11px;">Color</label>
+              <input type="color" id="effectColor" value="#000000" style="width:36px; height:20px; border:none;">
+              <input type="range" id="effectOpacity" min="0" max="255" value="128" style="flex:1;">
+              <span id="effectOpacityVal" style="width:28px; font-size:11px;">50%</span>
+            </div>
+            <div style="display:flex; gap:6px; margin-top:4px;">
+              <label style="font-size:11px; display:flex; align-items:center; gap:4px;">
+                <input type="checkbox" id="effectEnabled" checked> Enabled
+              </label>
+              <button id="removeEffectBtn" style="font-size:11px; color:#c00; margin-left:auto;">Remove</button>
+            </div>
+          </div>
+        </div>
       </aside>
     </div>
 
@@ -253,6 +292,38 @@
         render();
       })();
 
+      // Apply effects (drop shadows) to a drawing operation
+      function applyEffects(ctx, effectStack, drawFn) {
+        if (!effectStack?.enabled || !effectStack.effects?.length) {
+          drawFn();
+          return;
+        }
+        // Apply each effect in the stack
+        for (const effectId of effectStack.effects) {
+          try {
+            const effectJson = g.get_effect(effectId);
+            if (!effectJson) continue;
+            const effect = typeof effectJson === 'string' ? JSON.parse(effectJson) : effectJson;
+            if (!effect) continue;
+            if (effect.type === 'drop_shadow') {
+              ctx.shadowOffsetX = effect.offset_x;
+              ctx.shadowOffsetY = effect.offset_y;
+              ctx.shadowBlur = effect.blur_radius;
+              const c = effect.color;
+              ctx.shadowColor = `rgba(${c.r},${c.g},${c.b},${c.a/255})`;
+            }
+          } catch (e) {
+            console.warn('applyEffects error:', e);
+          }
+        }
+        drawFn();
+        // Reset shadow properties
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
+      }
+
       function render() {
         const hud = document.getElementById('hud');
         try {
@@ -296,18 +367,32 @@
             if (!r.filled) continue;
             const pts = r.points;
             if (!pts || pts.length < 6) continue;
-            ctx.beginPath();
-            ctx.moveTo(pts[0], pts[1]);
-            for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i+1]);
-            ctx.closePath();
-            // Use per-region color if present; else fallback
+            // Build the path
+            const buildPath = () => {
+              ctx.beginPath();
+              ctx.moveTo(pts[0], pts[1]);
+              for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i+1]);
+              ctx.closePath();
+            };
+            // Set fill style
             if (r.color && r.color.length === 4) {
               const [rr, gg, bb, aa] = r.color;
               ctx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${Math.max(0, Math.min(1, aa/255))})`;
             } else {
               ctx.fillStyle = 'rgba(56, 139, 253, 0.15)';
             }
-            ctx.fill();
+            // Check for effects on this region
+            let effectStack = null;
+            try {
+              const esJson = g.get_region_effects(r.key);
+              if (esJson) effectStack = typeof esJson === 'string' ? JSON.parse(esJson) : esJson;
+            } catch {}
+            if (effectStack && effectStack.enabled && effectStack.effects?.length) {
+              applyEffects(ctx, effectStack, () => { buildPath(); ctx.fill(); });
+            } else {
+              buildPath();
+              ctx.fill();
+            }
           }
           ctx.restore();
         }
@@ -909,6 +994,161 @@
         else { if (dashPreset) dashPreset.value = ''; if (dashEl) { dashEl.disabled = true; dashEl.value = ''; } }
       }
 
+      // Effects panel state
+      state.selectedEffectTarget = null; // { type: 'region'|'shape'|'text'|'group', id: number }
+      state.selectedEffectId = null;
+
+      function refreshEffectsPanel() {
+        const panel = document.getElementById('effectsPanel');
+        const controls = document.getElementById('effectControls');
+        const effectsList = document.getElementById('effectsList');
+        if (!panel) return;
+
+        // Show panel if we have a hover region (when bucket mode) or selected region
+        const showPanel = state.bucket && state.hoverRegion?.key != null;
+        panel.style.display = showPanel ? 'flex' : 'none';
+        if (!showPanel) {
+          state.selectedEffectTarget = null;
+          state.selectedEffectId = null;
+          return;
+        }
+
+        const regionKey = state.hoverRegion.key;
+        state.selectedEffectTarget = { type: 'region', id: regionKey };
+
+        // Get effects for this region
+        let effectStack = null;
+        try {
+          const esJson = g.get_region_effects(regionKey);
+          if (esJson) effectStack = typeof esJson === 'string' ? JSON.parse(esJson) : esJson;
+        } catch {}
+
+        // Build effects list HTML
+        if (effectStack && effectStack.effects && effectStack.effects.length > 0) {
+          let html = '<div style="margin-bottom:6px; font-weight:500;">Applied Effects:</div>';
+          for (const effectId of effectStack.effects) {
+            try {
+              const effJson = g.get_effect(effectId);
+              const eff = typeof effJson === 'string' ? JSON.parse(effJson) : effJson;
+              if (eff) {
+                const isSelected = state.selectedEffectId === effectId;
+                html += `<div style="padding:4px; background:${isSelected ? '#e6f0ff' : '#f5f5f5'}; border-radius:4px; margin-bottom:4px; cursor:pointer;" data-effect-id="${effectId}">`;
+                html += `<span style="font-weight:500;">${eff.type === 'drop_shadow' ? 'Drop Shadow' : eff.type}</span>`;
+                html += '</div>';
+              }
+            } catch {}
+          }
+          effectsList.innerHTML = html;
+
+          // Add click handlers for effect selection
+          effectsList.querySelectorAll('[data-effect-id]').forEach(el => {
+            el.addEventListener('click', () => {
+              state.selectedEffectId = parseInt(el.dataset.effectId);
+              refreshEffectsPanel();
+              updateEffectControls();
+            });
+          });
+        } else {
+          effectsList.innerHTML = '<div class="hint">No effects applied</div>';
+        }
+
+        // Show controls if an effect is selected
+        if (state.selectedEffectId != null && controls) {
+          controls.style.display = 'flex';
+          updateEffectControls();
+        } else if (controls) {
+          controls.style.display = 'none';
+        }
+      }
+
+      function updateEffectControls() {
+        if (state.selectedEffectId == null) return;
+        try {
+          const effJson = g.get_effect(state.selectedEffectId);
+          const eff = typeof effJson === 'string' ? JSON.parse(effJson) : effJson;
+          if (!eff || eff.type !== 'drop_shadow') return;
+
+          document.getElementById('effectOffsetX').value = eff.offset_x;
+          document.getElementById('effectOffsetXVal').textContent = Math.round(eff.offset_x);
+          document.getElementById('effectOffsetY').value = eff.offset_y;
+          document.getElementById('effectOffsetYVal').textContent = Math.round(eff.offset_y);
+          document.getElementById('effectBlur').value = eff.blur_radius;
+          document.getElementById('effectBlurVal').textContent = Math.round(eff.blur_radius);
+          document.getElementById('effectColor').value = rgbToHex(eff.color.r, eff.color.g, eff.color.b);
+          document.getElementById('effectOpacity').value = eff.color.a;
+          document.getElementById('effectOpacityVal').textContent = Math.round(eff.color.a / 255 * 100) + '%';
+
+          // Get enabled state from effect stack
+          if (state.selectedEffectTarget) {
+            let stack = null;
+            try {
+              const stackJson = g.get_region_effects(state.selectedEffectTarget.id);
+              if (stackJson) stack = typeof stackJson === 'string' ? JSON.parse(stackJson) : stackJson;
+            } catch {}
+            document.getElementById('effectEnabled').checked = stack?.enabled ?? true;
+          }
+        } catch (e) {
+          console.warn('updateEffectControls error:', e);
+        }
+      }
+
+      // Effects panel event handlers
+      document.getElementById('addEffectBtn')?.addEventListener('click', () => {
+        if (!state.selectedEffectTarget) return;
+        const effectId = g.add_drop_shadow(4, 4, 8, 0, 0, 0, 0, 128);
+        if (state.selectedEffectTarget.type === 'region') {
+          g.add_effect_to_region(state.selectedEffectTarget.id, effectId);
+        }
+        state.selectedEffectId = effectId;
+        refreshEffectsPanel();
+        render();
+      });
+
+      document.getElementById('removeEffectBtn')?.addEventListener('click', () => {
+        if (state.selectedEffectId == null) return;
+        g.remove_effect(state.selectedEffectId);
+        state.selectedEffectId = null;
+        refreshEffectsPanel();
+        render();
+      });
+
+      function updateSelectedEffect() {
+        if (state.selectedEffectId == null) return;
+        const offsetX = parseFloat(document.getElementById('effectOffsetX').value) || 0;
+        const offsetY = parseFloat(document.getElementById('effectOffsetY').value) || 0;
+        const blur = parseFloat(document.getElementById('effectBlur').value) || 0;
+        const colorHex = document.getElementById('effectColor').value;
+        const opacity = parseInt(document.getElementById('effectOpacity').value) || 128;
+        const rgb = hexToRgb(colorHex);
+        g.update_drop_shadow(state.selectedEffectId, offsetX, offsetY, blur, 0, rgb.r, rgb.g, rgb.b, opacity);
+
+        document.getElementById('effectOffsetXVal').textContent = Math.round(offsetX);
+        document.getElementById('effectOffsetYVal').textContent = Math.round(offsetY);
+        document.getElementById('effectBlurVal').textContent = Math.round(blur);
+        document.getElementById('effectOpacityVal').textContent = Math.round(opacity / 255 * 100) + '%';
+        render();
+      }
+
+      document.getElementById('effectOffsetX')?.addEventListener('input', updateSelectedEffect);
+      document.getElementById('effectOffsetY')?.addEventListener('input', updateSelectedEffect);
+      document.getElementById('effectBlur')?.addEventListener('input', updateSelectedEffect);
+      document.getElementById('effectColor')?.addEventListener('input', updateSelectedEffect);
+      document.getElementById('effectOpacity')?.addEventListener('input', updateSelectedEffect);
+
+      document.getElementById('effectEnabled')?.addEventListener('change', () => {
+        if (!state.selectedEffectTarget) return;
+        const enabled = document.getElementById('effectEnabled').checked;
+        if (state.selectedEffectTarget.type === 'region') {
+          g.set_region_effects_enabled(state.selectedEffectTarget.id, enabled);
+        }
+        render();
+      });
+
+      function hexToRgb(hex) {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : { r: 0, g: 0, b: 0 };
+      }
+
       // Regions: recompute at most once per animation frame
       state.scheduledRegion = false;
       function scheduleRegions() {
@@ -1188,9 +1428,11 @@
             for (const r of regions) { if (pointInPoly(x, y, r.points)) { found = r; break; } }
           }
           state.hoverRegion = found;
+          refreshEffectsPanel();
           render();
         } else {
           state.hoverRegion = null;
+          refreshEffectsPanel();
         }
         // Hover update when idle
         if (!state.dragging && !state.connecting) {

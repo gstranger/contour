@@ -25,10 +25,10 @@ mod svg;
 
 use layers::LayerSystem;
 use model::{
-    Color, ColorStop, Edge, EdgeKind, FillRule, FillState, FontStyle, Gradient, GradientId,
-    GradientUnits, HandleMode, LayerId, LinearGradient, Node, Paint, PrimitiveResult, RadialGradient,
-    Shape, SpreadMethod, TextAlign, TextElement, TextId, TextStyle, TextType, Vec2, VerticalAlign,
-    TextOverflow,
+    Color, ColorStop, DropShadow, Edge, EdgeKind, Effect, EffectId, EffectStack, FillRule,
+    FillState, FontStyle, Gradient, GradientId, GradientUnits, HandleMode, LayerId, LinearGradient,
+    Node, Paint, PrimitiveResult, RadialGradient, Shape, SpreadMethod, TextAlign, TextElement,
+    TextId, TextStyle, TextType, Vec2, VerticalAlign, TextOverflow,
 };
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -72,6 +72,13 @@ pub struct Graph {
     pub(crate) layer_system: LayerSystem,      // layer/group hierarchy
     pub(crate) gradients: HashMap<GradientId, Gradient>, // gradient definitions
     pub(crate) next_gradient_id: GradientId,   // next gradient ID
+    // Effects system
+    pub(crate) effects: HashMap<EffectId, Effect>,
+    pub(crate) next_effect_id: EffectId,
+    pub(crate) shape_effects: HashMap<u32, EffectStack>,
+    pub(crate) region_effects: HashMap<u32, EffectStack>,
+    pub(crate) text_effects: HashMap<TextId, EffectStack>,
+    pub(crate) group_effects: HashMap<LayerId, EffectStack>,
     pub(crate) geom_ver: u64,
     pub(crate) last_geom_ver: u64,
     pub(crate) prev_regions: Vec<(u32, i32, i32, f32)>, // (key, qcx, qcy, area)
@@ -208,6 +215,12 @@ impl Graph {
             layer_system: LayerSystem::new(),
             gradients: HashMap::new(),
             next_gradient_id: 0,
+            effects: HashMap::new(),
+            next_effect_id: 0,
+            shape_effects: HashMap::new(),
+            region_effects: HashMap::new(),
+            text_effects: HashMap::new(),
+            group_effects: HashMap::new(),
             geom_ver: 1,
             last_geom_ver: 0,
             prev_regions: Vec::new(),
@@ -554,6 +567,12 @@ impl Graph {
         self.shapes.clear();
         self.texts.clear();
         self.fills.clear();
+        self.effects.clear();
+        self.next_effect_id = 0;
+        self.shape_effects.clear();
+        self.region_effects.clear();
+        self.text_effects.clear();
+        self.group_effects.clear();
         self.prev_regions.clear();
         self.region_cache.borrow_mut().take();
         self.flatten_index.borrow_mut().take();
@@ -1880,6 +1899,249 @@ impl Graph {
             return true;
         }
         false
+    }
+}
+
+// Effect management
+impl Graph {
+    /// Add a drop shadow effect, returns effect ID
+    pub fn add_drop_shadow(
+        &mut self,
+        offset_x: f32,
+        offset_y: f32,
+        blur_radius: f32,
+        spread_radius: f32,
+        color: Color,
+    ) -> EffectId {
+        let id = self.next_effect_id;
+        self.next_effect_id += 1;
+        self.effects.insert(
+            id,
+            Effect::DropShadow(DropShadow {
+                offset_x,
+                offset_y,
+                blur_radius,
+                spread_radius,
+                color,
+            }),
+        );
+        id
+    }
+
+    /// Get an effect by ID
+    pub fn get_effect(&self, id: EffectId) -> Option<&Effect> {
+        self.effects.get(&id)
+    }
+
+    /// Update an existing effect
+    pub fn update_effect(&mut self, id: EffectId, effect: Effect) -> bool {
+        if self.effects.contains_key(&id) {
+            self.effects.insert(id, effect);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove an effect (also cleans up assignments)
+    pub fn remove_effect(&mut self, id: EffectId) -> bool {
+        if self.effects.remove(&id).is_some() {
+            // Clean up all assignments
+            for stack in self.shape_effects.values_mut() {
+                stack.effects.retain(|&eid| eid != id);
+            }
+            for stack in self.region_effects.values_mut() {
+                stack.effects.retain(|&eid| eid != id);
+            }
+            for stack in self.text_effects.values_mut() {
+                stack.effects.retain(|&eid| eid != id);
+            }
+            for stack in self.group_effects.values_mut() {
+                stack.effects.retain(|&eid| eid != id);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get all effect IDs
+    pub fn effect_ids(&self) -> Vec<EffectId> {
+        self.effects.keys().copied().collect()
+    }
+
+    // --- Shape effects ---
+
+    /// Add an effect to a shape's effect stack
+    pub fn add_effect_to_shape(&mut self, shape_id: u32, effect_id: EffectId) -> bool {
+        if !self.effects.contains_key(&effect_id) {
+            return false;
+        }
+        if self.shapes.get(shape_id as usize).and_then(|s| s.as_ref()).is_none() {
+            return false;
+        }
+        let stack = self.shape_effects.entry(shape_id).or_insert_with(EffectStack::new);
+        if !stack.effects.contains(&effect_id) {
+            stack.effects.push(effect_id);
+        }
+        true
+    }
+
+    /// Remove an effect from a shape's effect stack
+    pub fn remove_effect_from_shape(&mut self, shape_id: u32, effect_id: EffectId) -> bool {
+        if let Some(stack) = self.shape_effects.get_mut(&shape_id) {
+            let before = stack.effects.len();
+            stack.effects.retain(|&id| id != effect_id);
+            stack.effects.len() < before
+        } else {
+            false
+        }
+    }
+
+    /// Get a shape's effect stack
+    pub fn get_shape_effects(&self, shape_id: u32) -> Option<&EffectStack> {
+        self.shape_effects.get(&shape_id)
+    }
+
+    /// Set a shape's effect stack enabled state
+    pub fn set_shape_effects_enabled(&mut self, shape_id: u32, enabled: bool) -> bool {
+        if let Some(stack) = self.shape_effects.get_mut(&shape_id) {
+            stack.enabled = enabled;
+            true
+        } else {
+            false
+        }
+    }
+
+    // --- Region effects ---
+
+    /// Add an effect to a region's effect stack
+    pub fn add_effect_to_region(&mut self, region_key: u32, effect_id: EffectId) -> bool {
+        if !self.effects.contains_key(&effect_id) {
+            return false;
+        }
+        let stack = self.region_effects.entry(region_key).or_insert_with(EffectStack::new);
+        if !stack.effects.contains(&effect_id) {
+            stack.effects.push(effect_id);
+        }
+        true
+    }
+
+    /// Remove an effect from a region's effect stack
+    pub fn remove_effect_from_region(&mut self, region_key: u32, effect_id: EffectId) -> bool {
+        if let Some(stack) = self.region_effects.get_mut(&region_key) {
+            let before = stack.effects.len();
+            stack.effects.retain(|&id| id != effect_id);
+            stack.effects.len() < before
+        } else {
+            false
+        }
+    }
+
+    /// Get a region's effect stack
+    pub fn get_region_effects(&self, region_key: u32) -> Option<&EffectStack> {
+        self.region_effects.get(&region_key)
+    }
+
+    /// Set a region's effect stack enabled state
+    pub fn set_region_effects_enabled(&mut self, region_key: u32, enabled: bool) -> bool {
+        if let Some(stack) = self.region_effects.get_mut(&region_key) {
+            stack.enabled = enabled;
+            true
+        } else {
+            false
+        }
+    }
+
+    // --- Text effects ---
+
+    /// Add an effect to a text element's effect stack
+    pub fn add_effect_to_text(&mut self, text_id: TextId, effect_id: EffectId) -> bool {
+        if !self.effects.contains_key(&effect_id) {
+            return false;
+        }
+        if self.texts.get(text_id as usize).and_then(|t| t.as_ref()).is_none() {
+            return false;
+        }
+        let stack = self.text_effects.entry(text_id).or_insert_with(EffectStack::new);
+        if !stack.effects.contains(&effect_id) {
+            stack.effects.push(effect_id);
+        }
+        true
+    }
+
+    /// Remove an effect from a text element's effect stack
+    pub fn remove_effect_from_text(&mut self, text_id: TextId, effect_id: EffectId) -> bool {
+        if let Some(stack) = self.text_effects.get_mut(&text_id) {
+            let before = stack.effects.len();
+            stack.effects.retain(|&id| id != effect_id);
+            stack.effects.len() < before
+        } else {
+            false
+        }
+    }
+
+    /// Get a text element's effect stack
+    pub fn get_text_effects(&self, text_id: TextId) -> Option<&EffectStack> {
+        self.text_effects.get(&text_id)
+    }
+
+    /// Set a text element's effect stack enabled state
+    pub fn set_text_effects_enabled(&mut self, text_id: TextId, enabled: bool) -> bool {
+        if let Some(stack) = self.text_effects.get_mut(&text_id) {
+            stack.enabled = enabled;
+            true
+        } else {
+            false
+        }
+    }
+
+    // --- Group effects ---
+
+    /// Add an effect to a group's effect stack
+    pub fn add_effect_to_group(&mut self, group_id: LayerId, effect_id: EffectId) -> bool {
+        if !self.effects.contains_key(&effect_id) {
+            return false;
+        }
+        if !self.layer_system.groups.contains_key(&group_id) {
+            return false;
+        }
+        let stack = self.group_effects.entry(group_id).or_insert_with(EffectStack::new);
+        if !stack.effects.contains(&effect_id) {
+            stack.effects.push(effect_id);
+        }
+        true
+    }
+
+    /// Remove an effect from a group's effect stack
+    pub fn remove_effect_from_group(&mut self, group_id: LayerId, effect_id: EffectId) -> bool {
+        if let Some(stack) = self.group_effects.get_mut(&group_id) {
+            let before = stack.effects.len();
+            stack.effects.retain(|&id| id != effect_id);
+            stack.effects.len() < before
+        } else {
+            false
+        }
+    }
+
+    /// Get a group's effect stack
+    pub fn get_group_effects(&self, group_id: LayerId) -> Option<&EffectStack> {
+        self.group_effects.get(&group_id)
+    }
+
+    /// Set a group's effect stack enabled state
+    pub fn set_group_effects_enabled(&mut self, group_id: LayerId, enabled: bool) -> bool {
+        if let Some(stack) = self.group_effects.get_mut(&group_id) {
+            stack.enabled = enabled;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get all effects as (id, effect) pairs
+    pub fn get_all_effects(&self) -> Vec<(EffectId, &Effect)> {
+        self.effects.iter().map(|(id, e)| (*id, e)).collect()
     }
 }
 

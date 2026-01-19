@@ -210,6 +210,57 @@ pub enum Paint {
     Gradient { id: GradientId },
 }
 
+// --- Effects System ---
+
+/// Effect identifier type
+pub type EffectId = u32;
+
+/// Drop shadow effect
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DropShadow {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur_radius: f32,
+    pub spread_radius: f32,
+    pub color: Color,
+}
+
+impl Default for DropShadow {
+    fn default() -> Self {
+        Self {
+            offset_x: 4.0,
+            offset_y: 4.0,
+            blur_radius: 8.0,
+            spread_radius: 0.0,
+            color: Color { r: 0, g: 0, b: 0, a: 128 },
+        }
+    }
+}
+
+/// Unified effect type
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Effect {
+    DropShadow(DropShadow),
+    // Future: InnerShadow, GaussianBlur, OuterGlow
+}
+
+/// Stack of effects assigned to an element
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct EffectStack {
+    pub effects: Vec<EffectId>,
+    pub enabled: bool,
+}
+
+impl EffectStack {
+    pub fn new() -> Self {
+        Self {
+            effects: Vec::new(),
+            enabled: true,
+        }
+    }
+}
+
 // --- Text System ---
 
 /// Text identifier type

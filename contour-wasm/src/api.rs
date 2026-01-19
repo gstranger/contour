@@ -1,4 +1,5 @@
 use crate::Graph;
+use crate::interop::{new_obj, set_kv};
 use js_sys::{Float32Array, Uint32Array};
 use wasm_bindgen::prelude::*;
 type JsValue = wasm_bindgen::JsValue;
@@ -514,6 +515,142 @@ impl Graph {
         }
         let moved = self.inner.translate_edges(&ids, dx, dy, split_shared);
         error::ok(JsValue::from_f64(moved as f64))
+    }
+
+    // Selection transforms
+    /// Get bounding box for a selection of elements.
+    /// Returns { minx, miny, maxx, maxy } or null if empty selection.
+    pub fn get_selection_bbox(
+        &self,
+        node_ids: &Uint32Array,
+        edge_ids: &Uint32Array,
+        shape_ids: &Uint32Array,
+        text_ids: &Uint32Array,
+    ) -> JsValue {
+        let nids = to_u32_vec(node_ids);
+        let eids = to_u32_vec(edge_ids);
+        let sids = to_u32_vec(shape_ids);
+        let tids = to_u32_vec(text_ids);
+        match self.inner.get_selection_bbox(&nids, &eids, &sids, &tids) {
+            Some((minx, miny, maxx, maxy)) => {
+                let obj = new_obj();
+                set_kv(&obj, "minx", &JsValue::from_f64(minx as f64));
+                set_kv(&obj, "miny", &JsValue::from_f64(miny as f64));
+                set_kv(&obj, "maxx", &JsValue::from_f64(maxx as f64));
+                set_kv(&obj, "maxy", &JsValue::from_f64(maxy as f64));
+                obj.into()
+            }
+            None => JsValue::NULL,
+        }
+    }
+
+    /// Rotate selected elements around a pivot point.
+    /// Returns the number of nodes modified.
+    pub fn rotate_selection(
+        &mut self,
+        node_ids: &Uint32Array,
+        edge_ids: &Uint32Array,
+        cx: f32,
+        cy: f32,
+        angle: f32,
+    ) -> u32 {
+        let nids = to_u32_vec(node_ids);
+        let eids = to_u32_vec(edge_ids);
+        self.inner.rotate_selection(&nids, &eids, cx, cy, angle)
+    }
+
+    /// Rotate selected elements around a pivot point (with validation).
+    pub fn rotate_selection_res(
+        &mut self,
+        node_ids: &Uint32Array,
+        edge_ids: &Uint32Array,
+        cx: f32,
+        cy: f32,
+        angle: f32,
+    ) -> JsValue {
+        if !cx.is_finite() || !cy.is_finite() || !angle.is_finite() {
+            return error::non_finite("rotate_selection parameters");
+        }
+        let nids = to_u32_vec(node_ids);
+        let eids = to_u32_vec(edge_ids);
+        let moved = self.inner.rotate_selection(&nids, &eids, cx, cy, angle);
+        error::ok(JsValue::from_f64(moved as f64))
+    }
+
+    /// Scale selected elements from a pivot point.
+    /// Returns the number of nodes modified.
+    pub fn scale_selection(
+        &mut self,
+        node_ids: &Uint32Array,
+        edge_ids: &Uint32Array,
+        cx: f32,
+        cy: f32,
+        sx: f32,
+        sy: f32,
+        scale_stroke: bool,
+    ) -> u32 {
+        let nids = to_u32_vec(node_ids);
+        let eids = to_u32_vec(edge_ids);
+        self.inner.scale_selection(&nids, &eids, cx, cy, sx, sy, scale_stroke)
+    }
+
+    /// Scale selected elements from a pivot point (with validation).
+    pub fn scale_selection_res(
+        &mut self,
+        node_ids: &Uint32Array,
+        edge_ids: &Uint32Array,
+        cx: f32,
+        cy: f32,
+        sx: f32,
+        sy: f32,
+        scale_stroke: bool,
+    ) -> JsValue {
+        if !cx.is_finite() || !cy.is_finite() || !sx.is_finite() || !sy.is_finite() {
+            return error::non_finite("scale_selection parameters");
+        }
+        let nids = to_u32_vec(node_ids);
+        let eids = to_u32_vec(edge_ids);
+        let moved = self.inner.scale_selection(&nids, &eids, cx, cy, sx, sy, scale_stroke);
+        error::ok(JsValue::from_f64(moved as f64))
+    }
+
+    /// Rotate a text element around a pivot point.
+    pub fn rotate_text_around(&mut self, id: u32, cx: f32, cy: f32, angle: f32) -> bool {
+        self.inner.rotate_text_around(id, cx, cy, angle)
+    }
+
+    /// Rotate a text element around a pivot point (with validation).
+    pub fn rotate_text_around_res(&mut self, id: u32, cx: f32, cy: f32, angle: f32) -> JsValue {
+        if !cx.is_finite() || !cy.is_finite() || !angle.is_finite() {
+            return error::non_finite("rotate_text_around parameters");
+        }
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        error::ok(JsValue::from_bool(self.inner.rotate_text_around(id, cx, cy, angle)))
+    }
+
+    /// Scale a text element from a pivot point.
+    pub fn scale_text_around(&mut self, id: u32, cx: f32, cy: f32, sx: f32, sy: f32) -> bool {
+        self.inner.scale_text_around(id, cx, cy, sx, sy)
+    }
+
+    /// Scale a text element from a pivot point (with validation).
+    pub fn scale_text_around_res(
+        &mut self,
+        id: u32,
+        cx: f32,
+        cy: f32,
+        sx: f32,
+        sy: f32,
+    ) -> JsValue {
+        if !cx.is_finite() || !cy.is_finite() || !sx.is_finite() || !sy.is_finite() {
+            return error::non_finite("scale_text_around parameters");
+        }
+        if self.inner.get_text(id).is_none() {
+            return error::invalid_id("text", id);
+        }
+        error::ok(JsValue::from_bool(self.inner.scale_text_around(id, cx, cy, sx, sy)))
     }
 
     // Polylines
@@ -2226,6 +2363,14 @@ fn to_pairs(arr: &Float32Array) -> Vec<(f32, f32)> {
     }
     out
 }
+
+fn to_u32_vec(arr: &Uint32Array) -> Vec<u32> {
+    let len = arr.length() as usize;
+    let mut buf = vec![0u32; len];
+    arr.copy_to(&mut buf);
+    buf
+}
+
 fn edge_exists(g: &contour::Graph, id: u32) -> bool {
     let ea = g.get_edge_arrays();
     ea.ids.iter().any(|&x| x == id)

@@ -1885,17 +1885,23 @@
       if (inferShapesBtn) {
         inferShapesBtn.addEventListener('click', () => {
           try {
+            // First, infer any NEW shapes from unassigned edges
             if (typeof g.infer_shapes === 'function') {
-              const result = g.infer_shapes();
-              // infer_shapes returns a Uint32Array directly, not an object
-              const shapeIds = result ? Array.from(result) : [];
+              const newShapes = g.infer_shapes();
+              console.log('Newly inferred shapes:', newShapes ? Array.from(newShapes) : []);
+            }
+            // Then get ALL existing shape IDs (including previously created ones)
+            // infer_shapes only returns NEW shapes, so we need get_shape_ids for the full list
+            if (typeof g.get_shape_ids === 'function') {
+              const allShapeIds = g.get_shape_ids();
+              const shapeIds = allShapeIds ? Array.from(allShapeIds) : [];
               state.shapes = shapeIds.map(id => ({ id }));
               state.selectedShapes = [];
               updateBooleanButtons();
               updateShapeList();
               updateModeLabel();
               render();
-              console.log('Inferred shapes:', shapeIds.length, shapeIds);
+              console.log('All shapes:', shapeIds.length, shapeIds);
             }
           } catch (e) { console.warn('Infer shapes error:', e); }
         });
@@ -1953,11 +1959,14 @@
             case 'xor': result = g.boolean_xor(a, b); break;
           }
           console.log(`Boolean ${opName} result:`, result);
-          // Re-infer shapes after operation
+          // Re-infer shapes after operation and get ALL shapes
           state.selectedShapes = [];
           if (typeof g.infer_shapes === 'function') {
-            const inferred = g.infer_shapes();
-            const shapeIds = inferred ? Array.from(inferred) : [];
+            g.infer_shapes(); // Create any new shapes from unassigned edges
+          }
+          if (typeof g.get_shape_ids === 'function') {
+            const allShapeIds = g.get_shape_ids();
+            const shapeIds = allShapeIds ? Array.from(allShapeIds) : [];
             state.shapes = shapeIds.map(id => ({ id }));
           }
           updateBooleanButtons();

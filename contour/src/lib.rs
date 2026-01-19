@@ -1994,6 +1994,192 @@ impl Graph {
     }
 }
 
+// Selection transforms (bounding box, rotate, scale)
+impl Graph {
+    /// Compute the combined AABB for a selection of elements.
+    /// Returns (minx, miny, maxx, maxy) or None if the selection is empty.
+    pub fn get_selection_bbox(
+        &self,
+        node_ids: &[u32],
+        edge_ids: &[u32],
+        shape_ids: &[u32],
+        text_ids: &[u32],
+    ) -> Option<(f32, f32, f32, f32)> {
+        let mut bbox: Option<(f32, f32, f32, f32)> = None;
+
+        // Nodes contribute as single points
+        for &nid in node_ids {
+            if let Some((x, y)) = self.get_node(nid) {
+                bbox = Self::union_bbox(bbox, Some((x, y, x, y)));
+            }
+        }
+
+        // Edges use edge_aabb_of
+        for &eid in edge_ids {
+            if let Some(Some(e)) = self.edges.get(eid as usize) {
+                if let Some(eb) = self.edge_aabb_of(e) {
+                    bbox = Self::union_bbox(bbox, Some(eb));
+                }
+            }
+        }
+
+        // Shapes are unions of their edges
+        for &sid in shape_ids {
+            if let Some(Some(shape)) = self.shapes.get(sid as usize) {
+                for &eid in &shape.edges {
+                    if let Some(Some(e)) = self.edges.get(eid as usize) {
+                        if let Some(eb) = self.edge_aabb_of(e) {
+                            bbox = Self::union_bbox(bbox, Some(eb));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Text elements use position and estimated dimensions
+        for &tid in text_ids {
+            if let Some(Some(text)) = self.texts.get(tid as usize) {
+                let x = text.position.x;
+                let y = text.position.y;
+                let fs = text.style.font_size;
+                // Estimate width based on content length and font size
+                let est_width = text.content.len() as f32 * fs * 0.6;
+                let est_height = fs * text.style.line_height;
+                // For TextType::Box, use the actual dimensions
+                let (w, h) = match &text.text_type {
+                    TextType::Box { width, height, .. } => (*width, *height),
+                    _ => (est_width, est_height),
+                };
+                bbox = Self::union_bbox(bbox, Some((x, y, x + w, y + h)));
+            }
+        }
+
+        bbox
+    }
+
+    /// Rotate selected elements around a pivot point by angle (radians).
+    /// Returns the number of nodes modified.
+    pub fn rotate_selection(
+        &mut self,
+        node_ids: &[u32],
+        edge_ids: &[u32],
+        cx: f32,
+        cy: f32,
+        angle: f32,
+    ) -> u32 {
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+        let mut modified = 0u32;
+
+        // Collect unique nodes from both direct selection and edges
+        let mut nodes_to_rotate: HashSet<u32> = node_ids.iter().copied().collect();
+        for &eid in edge_ids {
+            if let Some(e) = self.edges.get(eid as usize).and_then(|e| e.as_ref()) {
+                nodes_to_rotate.insert(e.a);
+                nodes_to_rotate.insert(e.b);
+            }
+        }
+
+        // Rotate all nodes
+        for nid in nodes_to_rotate {
+            if let Some((ox, oy)) = self.get_node(nid) {
+                let dx = ox - cx;
+                let dy = oy - cy;
+                let nx = cx + dx * cos_a - dy * sin_a;
+                let ny = cy + dx * sin_a + dy * cos_a;
+                if self.move_node(nid, nx, ny) {
+                    modified += 1;
+                }
+            }
+        }
+
+        // Rotate cubic handle offsets (relative vectors)
+        for &eid in edge_ids {
+            if let Some(Some(e)) = self.edges.get_mut(eid as usize) {
+                if let EdgeKind::Cubic { ref mut ha, ref mut hb, .. } = e.kind {
+                    // Rotate handle vectors (they're relative to their anchor nodes)
+                    let new_ha_x = ha.x * cos_a - ha.y * sin_a;
+                    let new_ha_y = ha.x * sin_a + ha.y * cos_a;
+                    let new_hb_x = hb.x * cos_a - hb.y * sin_a;
+                    let new_hb_y = hb.x * sin_a + hb.y * cos_a;
+                    ha.x = new_ha_x;
+                    ha.y = new_ha_y;
+                    hb.x = new_hb_x;
+                    hb.y = new_hb_y;
+                    self.dirty.edges_modified.insert(eid);
+                }
+            }
+        }
+
+        self.bump();
+        modified
+    }
+
+    /// Scale selected elements from a pivot point.
+    /// Returns the number of nodes modified.
+    pub fn scale_selection(
+        &mut self,
+        node_ids: &[u32],
+        edge_ids: &[u32],
+        cx: f32,
+        cy: f32,
+        sx: f32,
+        sy: f32,
+        scale_stroke: bool,
+    ) -> u32 {
+        let mut modified = 0u32;
+
+        // Collect unique nodes from both direct selection and edges
+        let mut nodes_to_scale: HashSet<u32> = node_ids.iter().copied().collect();
+        for &eid in edge_ids {
+            if let Some(e) = self.edges.get(eid as usize).and_then(|e| e.as_ref()) {
+                nodes_to_scale.insert(e.a);
+                nodes_to_scale.insert(e.b);
+            }
+        }
+
+        // Scale nodes relative to pivot
+        for nid in nodes_to_scale {
+            if let Some((ox, oy)) = self.get_node(nid) {
+                let nx = cx + (ox - cx) * sx;
+                let ny = cy + (oy - cy) * sy;
+                if self.move_node(nid, nx, ny) {
+                    modified += 1;
+                }
+            }
+        }
+
+        // Scale edge properties
+        for &eid in edge_ids {
+            if let Some(Some(e)) = self.edges.get_mut(eid as usize) {
+                // Scale handle vectors for cubic edges
+                if let EdgeKind::Cubic { ref mut ha, ref mut hb, .. } = e.kind {
+                    ha.x *= sx;
+                    ha.y *= sy;
+                    hb.x *= sx;
+                    hb.y *= sy;
+                }
+                // Scale polyline intermediate points
+                if let EdgeKind::Polyline { ref mut points } = e.kind {
+                    for p in points.iter_mut() {
+                        p.x = cx + (p.x - cx) * sx;
+                        p.y = cy + (p.y - cy) * sy;
+                    }
+                }
+                // Scale stroke width if requested
+                if scale_stroke {
+                    let avg_scale = (sx.abs() + sy.abs()) / 2.0;
+                    e.stroke_width *= avg_scale;
+                }
+                self.dirty.edges_modified.insert(eid);
+            }
+        }
+
+        self.bump();
+        modified
+    }
+}
+
 // Shape management
 impl Graph {
     /// Create a shape from an ordered list of edge IDs.
@@ -2293,6 +2479,45 @@ impl Graph {
     pub fn set_text_rotation(&mut self, id: TextId, radians: f32) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.rotation = radians;
+            return true;
+        }
+        false
+    }
+
+    /// Rotate a text element around a pivot point.
+    /// This moves the position and adds to the rotation.
+    pub fn rotate_text_around(&mut self, id: TextId, cx: f32, cy: f32, angle: f32) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            let cos_a = angle.cos();
+            let sin_a = angle.sin();
+            let ox = text.position.x;
+            let oy = text.position.y;
+            let dx = ox - cx;
+            let dy = oy - cy;
+            text.position.x = cx + dx * cos_a - dy * sin_a;
+            text.position.y = cy + dx * sin_a + dy * cos_a;
+            text.rotation += angle;
+            return true;
+        }
+        false
+    }
+
+    /// Scale a text element from a pivot point.
+    /// This moves the position and scales the font size.
+    pub fn scale_text_around(&mut self, id: TextId, cx: f32, cy: f32, sx: f32, sy: f32) -> bool {
+        if let Some(Some(text)) = self.texts.get_mut(id as usize) {
+            let ox = text.position.x;
+            let oy = text.position.y;
+            text.position.x = cx + (ox - cx) * sx;
+            text.position.y = cy + (oy - cy) * sy;
+            // Scale font size by average scale factor
+            let avg_scale = (sx.abs() + sy.abs()) / 2.0;
+            text.style.font_size *= avg_scale;
+            // Also scale box dimensions if it's a text box
+            if let TextType::Box { ref mut width, ref mut height, .. } = text.text_type {
+                *width *= sx.abs();
+                *height *= sy.abs();
+            }
             return true;
         }
         false

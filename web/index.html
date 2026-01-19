@@ -47,6 +47,7 @@
           <button id="clearBtn">Clear</button>
           <button id="importBtn" title="Import an SVG file">Import SVG</button>
           <input id="importSvgInput" type="file" accept=".svg,image/svg+xml" style="display:none" />
+          <button id="exportBtn" title="Export as SVG file">Export SVG</button>
         </div>
         <span class="hint" id="snapLabel"></span>
         <span class="hint" id="modeLabel"></span>
@@ -1750,6 +1751,26 @@
         reader.onload = () => { importSvgText(String(reader.result || '')); importInput.value = ''; };
         reader.onerror = (e) => { console.warn('File read failed', e); importInput.value = ''; };
         reader.readAsText(file);
+      });
+
+      // Export SVG
+      document.getElementById('exportBtn').addEventListener('click', () => {
+        try {
+          const svgContent = g.to_svg_document();
+          const blob = new Blob([svgContent], { type: 'image/svg+xml' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'export.svg';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          console.log('Exported SVG');
+        } catch (e) {
+          console.warn('Export SVG failed', e);
+          alert('Export failed: ' + (e.message || e));
+        }
       });
 
       // Drag-and-drop SVG onto the canvas

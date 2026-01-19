@@ -1329,6 +1329,11 @@ impl Graph {
         svg::to_svg_paths_impl(self)
     }
 
+    /// Generate a complete SVG document string with paths, styles, and text
+    pub fn to_svg_document(&self) -> String {
+        svg::to_svg_document_impl(self)
+    }
+
     fn bump(&mut self) {
         self.geom_ver = self.geom_ver.wrapping_add(1);
     }

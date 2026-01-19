@@ -230,6 +230,10 @@
         // Shape/Boolean state
         shapes: [], // [{ id, edges: [...] }]
         selectedShapes: [], // [id, id] for boolean ops (max 2)
+        // Multi-selection and transform state
+        multiSelection: [], // Array of {kind: 'node'|'edge'|'shape'|'text', id}
+        transformHandles: null, // {bbox, handles: [{x,y,type,cursor}], center}
+        transformDragging: null, // {handleIndex, handle, startPoint, startBbox, startCenter}
       };
 
       const snapLabel = document.getElementById('snapLabel');
@@ -322,6 +326,172 @@
         ctx.shadowOffsetY = 0;
         ctx.shadowBlur = 0;
         ctx.shadowColor = 'transparent';
+      }
+
+      // Transform handle helpers
+      const ROTATION_OFFSET = 25;
+      const HANDLE_SIZE = 8;
+      const HANDLE_HIT_TOLERANCE = 10;
+
+      function updateTransformHandles() {
+        if (state.multiSelection.length === 0) {
+          state.transformHandles = null;
+          return;
+        }
+
+        // Collect IDs by type
+        const nodeIds = state.multiSelection.filter(s => s.kind === 'node').map(s => s.id);
+        const edgeIds = state.multiSelection.filter(s => s.kind === 'edge').map(s => s.id);
+        const shapeIds = state.multiSelection.filter(s => s.kind === 'shape').map(s => s.id);
+        const textIds = state.multiSelection.filter(s => s.kind === 'text').map(s => s.id);
+
+        // Get bbox from engine
+        const bbox = g.get_selection_bbox(
+          new Uint32Array(nodeIds),
+          new Uint32Array(edgeIds),
+          new Uint32Array(shapeIds),
+          new Uint32Array(textIds)
+        );
+
+        if (!bbox) {
+          state.transformHandles = null;
+          return;
+        }
+
+        const { minx, miny, maxx, maxy } = bbox;
+        const cx = (minx + maxx) / 2;
+        const cy = (miny + maxy) / 2;
+
+        state.transformHandles = {
+          bbox: { minx, miny, maxx, maxy },
+          center: { x: cx, y: cy },
+          handles: [
+            { x: minx, y: miny, type: 'scale-tl', cursor: 'nwse-resize' }, // 0: TL
+            { x: maxx, y: miny, type: 'scale-tr', cursor: 'nesw-resize' }, // 1: TR
+            { x: maxx, y: maxy, type: 'scale-br', cursor: 'nwse-resize' }, // 2: BR
+            { x: minx, y: maxy, type: 'scale-bl', cursor: 'nesw-resize' }, // 3: BL
+            { x: cx, y: miny, type: 'scale-tc', cursor: 'ns-resize' },     // 4: TC
+            { x: maxx, y: cy, type: 'scale-mr', cursor: 'ew-resize' },     // 5: MR
+            { x: cx, y: maxy, type: 'scale-bc', cursor: 'ns-resize' },     // 6: BC
+            { x: minx, y: cy, type: 'scale-ml', cursor: 'ew-resize' },     // 7: ML
+            { x: cx, y: miny - ROTATION_OFFSET, type: 'rotate', cursor: 'grab' }, // 8: Rotation
+          ],
+        };
+      }
+
+      function hitTestTransformHandle(x, y) {
+        if (!state.transformHandles) return null;
+
+        for (let i = 0; i < state.transformHandles.handles.length; i++) {
+          const h = state.transformHandles.handles[i];
+          const dx = x - h.x;
+          const dy = y - h.y;
+          if (dx * dx + dy * dy <= HANDLE_HIT_TOLERANCE * HANDLE_HIT_TOLERANCE) {
+            return { index: i, handle: h };
+          }
+        }
+        return null;
+      }
+
+      function commitRotation(angle) {
+        const cx = state.transformHandles.center.x;
+        const cy = state.transformHandles.center.y;
+
+        const nodeIds = state.multiSelection.filter(s => s.kind === 'node').map(s => s.id);
+        const edgeIds = state.multiSelection.filter(s => s.kind === 'edge').map(s => s.id);
+        const textIds = state.multiSelection.filter(s => s.kind === 'text').map(s => s.id);
+
+        // Rotate nodes and edges
+        if (nodeIds.length > 0 || edgeIds.length > 0) {
+          g.rotate_selection(
+            new Uint32Array(nodeIds),
+            new Uint32Array(edgeIds),
+            cx, cy, angle
+          );
+        }
+
+        // Rotate text elements
+        for (const tid of textIds) {
+          g.rotate_text_around(tid, cx, cy, angle);
+        }
+
+        scheduleRegions();
+      }
+
+      function commitScale(td, x, y, uniformOverride) {
+        const { minx, miny, maxx, maxy } = td.startBbox;
+        const w = maxx - minx || 1;
+        const h = maxy - miny || 1;
+        const cx = td.startCenter.x;
+        const cy = td.startCenter.y;
+
+        let sx = 1, sy = 1;
+        const handle = td.handle;
+        const dx = x - td.startPoint[0];
+        const dy = y - td.startPoint[1];
+
+        // Compute scale factors based on handle type
+        switch (handle.type) {
+          case 'scale-tl':
+            sx = 1 - dx / w;
+            sy = 1 - dy / h;
+            break;
+          case 'scale-tr':
+            sx = 1 + dx / w;
+            sy = 1 - dy / h;
+            break;
+          case 'scale-br':
+            sx = 1 + dx / w;
+            sy = 1 + dy / h;
+            break;
+          case 'scale-bl':
+            sx = 1 - dx / w;
+            sy = 1 + dy / h;
+            break;
+          case 'scale-tc':
+            sy = 1 - dy / h;
+            break;
+          case 'scale-bc':
+            sy = 1 + dy / h;
+            break;
+          case 'scale-ml':
+            sx = 1 - dx / w;
+            break;
+          case 'scale-mr':
+            sx = 1 + dx / w;
+            break;
+        }
+
+        // Uniform scale for corners by default (shift inverts)
+        if (handle.type.match(/scale-(tl|tr|br|bl)/) && !uniformOverride) {
+          const avg = (Math.abs(sx) + Math.abs(sy)) / 2;
+          sx = sx >= 0 ? avg : -avg;
+          sy = sy >= 0 ? avg : -avg;
+        }
+
+        // Clamp to avoid degenerate transforms
+        sx = Math.max(0.01, Math.abs(sx)) * Math.sign(sx || 1);
+        sy = Math.max(0.01, Math.abs(sy)) * Math.sign(sy || 1);
+
+        const nodeIds = state.multiSelection.filter(s => s.kind === 'node').map(s => s.id);
+        const edgeIds = state.multiSelection.filter(s => s.kind === 'edge').map(s => s.id);
+        const textIds = state.multiSelection.filter(s => s.kind === 'text').map(s => s.id);
+
+        // Scale nodes and edges
+        if (nodeIds.length > 0 || edgeIds.length > 0) {
+          g.scale_selection(
+            new Uint32Array(nodeIds),
+            new Uint32Array(edgeIds),
+            cx, cy, sx, sy, true
+          );
+        }
+
+        // Scale text elements
+        for (const tid of textIds) {
+          g.scale_text_around(tid, cx, cy, sx, sy);
+        }
+
+        scheduleRegions();
       }
 
       function render() {
@@ -811,6 +981,48 @@
           }
         }
 
+        // Transform bounding box and handles
+        if (state.transformHandles && state.multiSelection.length > 0) {
+          const th = state.transformHandles;
+          const { minx, miny, maxx, maxy } = th.bbox;
+
+          ctx.save();
+          // Draw bounding box
+          ctx.strokeStyle = '#1a73e8';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 4]);
+          ctx.strokeRect(minx, miny, maxx - minx, maxy - miny);
+          ctx.setLineDash([]);
+
+          // Draw connection line from rotation handle to top-center
+          ctx.beginPath();
+          ctx.moveTo(th.handles[8].x, th.handles[8].y);
+          ctx.lineTo(th.handles[4].x, th.handles[4].y);
+          ctx.stroke();
+
+          // Draw handles
+          for (let i = 0; i < th.handles.length; i++) {
+            const h = th.handles[i];
+            ctx.beginPath();
+
+            if (h.type === 'rotate') {
+              // Rotation handle: filled circle
+              ctx.arc(h.x, h.y, HANDLE_SIZE / 2, 0, Math.PI * 2);
+              ctx.fillStyle = '#1a73e8';
+              ctx.fill();
+            } else {
+              // Scale handles: white squares with blue border
+              ctx.rect(h.x - HANDLE_SIZE / 2, h.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+              ctx.fillStyle = '#fff';
+              ctx.strokeStyle = '#1a73e8';
+              ctx.lineWidth = 2;
+              ctx.fill();
+              ctx.stroke();
+            }
+          }
+          ctx.restore();
+        }
+
         // HUD update
         try {
           const ecount = (eids && eids.length)|0; const ncount = (nids && nids.length)|0;
@@ -1205,6 +1417,22 @@
         // Defensive: ensure Graph is usable
         if (!g || typeof g.get_edge_data !== 'function') { console.error('Graph not ready'); return; }
         const [x, y] = canvasPoint(evt);
+
+        // Check for transform handle hit first (before normal picking)
+        if (state.transformHandles) {
+          const handleHit = hitTestTransformHandle(x, y);
+          if (handleHit) {
+            state.transformDragging = {
+              handleIndex: handleHit.index,
+              handle: handleHit.handle,
+              startPoint: [x, y],
+              startBbox: { ...state.transformHandles.bbox },
+              startCenter: { ...state.transformHandles.center },
+            };
+            return;
+          }
+        }
+
         // Pen tool interactions
         if (state.pen && state.penMode === 'points') {
           const [sx, sy] = snapPoint(x, y, null);
@@ -1358,7 +1586,23 @@
         if (pick && pick.kind === 'node') {
           const id = pick.id >>> 0;
           const n = g.get_node(id);
-          state.selection = { kind: 'node', id };
+          const selItem = { kind: 'node', id };
+
+          if (evt.shiftKey) {
+            // Add/remove from multi-selection
+            const idx = state.multiSelection.findIndex(s => s.kind === 'node' && s.id === id);
+            if (idx >= 0) {
+              state.multiSelection.splice(idx, 1);
+            } else {
+              state.multiSelection.push(selItem);
+            }
+          } else {
+            // Replace selection
+            state.multiSelection = [selItem];
+          }
+          state.selection = state.multiSelection[0] || null;
+          updateTransformHandles();
+
           if (evt.altKey) {
             // Start connecting mode
             state.connecting = { startId: id, startPos: [n[0], n[1]], cur: [x, y] };
@@ -1373,9 +1617,27 @@
           state.selection = { kind: 'edge', id: edge };
           state.dragging = { handle: true, edge, end };
         } else if (pick && pick.kind === 'edge') {
-          state.selection = { kind: 'edge', id: pick.id >>> 0 };
+          const id = pick.id >>> 0;
+          const selItem = { kind: 'edge', id };
+
+          if (evt.shiftKey) {
+            const idx = state.multiSelection.findIndex(s => s.kind === 'edge' && s.id === id);
+            if (idx >= 0) {
+              state.multiSelection.splice(idx, 1);
+            } else {
+              state.multiSelection.push(selItem);
+            }
+          } else {
+            state.multiSelection = [selItem];
+          }
+          state.selection = state.multiSelection[0] || null;
+          updateTransformHandles();
           state.dragging = null;
         } else {
+          if (!evt.shiftKey) {
+            state.multiSelection = [];
+            state.transformHandles = null;
+          }
           state.selection = null;
           state.dragging = null;
         }
@@ -1384,6 +1646,29 @@
 
       window.addEventListener('mousemove', (evt) => {
         const [x, y] = canvasPoint(evt);
+
+        // Transform handle dragging
+        if (state.transformDragging) {
+          const td = state.transformDragging;
+
+          if (td.handle.type === 'rotate') {
+            // Update cursor for rotation
+            canvas.style.cursor = 'grabbing';
+          } else {
+            canvas.style.cursor = td.handle.cursor;
+          }
+          render();
+          return;
+        }
+
+        // Update cursor when hovering over transform handles
+        if (state.transformHandles && !state.dragging && !state.connecting) {
+          const handleHit = hitTestTransformHandle(x, y);
+          if (handleHit) {
+            canvas.style.cursor = handleHit.handle.cursor;
+          }
+        }
+
         // Rectangle/Ellipse/Polygon/Star drag preview
         if ((state.rectMode || state.ellipseMode || state.polygonMode || state.starMode) && state.primitiveStart) {
           const [sx, sy] = snapPoint(x, y, null);
@@ -1472,6 +1757,33 @@
       window.addEventListener('mouseup', (evt) => {
         if (state.bending) { state.bending = null; return; }
         const [x, y] = canvasPoint(evt);
+
+        // Finish transform dragging
+        if (state.transformDragging) {
+          const td = state.transformDragging;
+
+          if (td.handle.type === 'rotate') {
+            // Calculate rotation angle
+            const cx = td.startCenter.x;
+            const cy = td.startCenter.y;
+            const startAngle = Math.atan2(td.startPoint[1] - cy, td.startPoint[0] - cx);
+            const currentAngle = Math.atan2(y - cy, x - cx);
+            const deltaAngle = currentAngle - startAngle;
+
+            if (Math.abs(deltaAngle) > 0.001) {
+              commitRotation(deltaAngle);
+            }
+          } else {
+            // Commit scale
+            commitScale(td, x, y, evt.shiftKey);
+          }
+
+          state.transformDragging = null;
+          updateTransformHandles();
+          canvas.style.cursor = 'default';
+          render();
+          return;
+        }
 
         // Finish rectangle on mouseup
         if (state.rectMode && state.primitiveStart) {
@@ -1972,7 +2284,41 @@
         } else if (evt.key === 'Enter') {
           if (state.pen && state.penPath) { state.penPath = null; state.penPreview = null; render(); }
         } else if (evt.key === 'Escape') {
-          if (state.pen && state.penPath) { state.penPath = null; state.penPreview = null; render(); }
+          if (state.pen && state.penPath) { state.penPath = null; state.penPreview = null; }
+          // Clear multi-selection and transform handles
+          state.multiSelection = [];
+          state.selection = null;
+          state.transformHandles = null;
+          render();
+        } else if (mod && evt.key.toLowerCase() === 'a') {
+          // Select All (Ctrl/Cmd+A)
+          evt.preventDefault();
+          state.multiSelection = [];
+          const ed = g.get_edge_data();
+          if (ed && ed.ids) {
+            for (let i = 0; i < ed.ids.length; i++) {
+              state.multiSelection.push({ kind: 'edge', id: ed.ids[i] });
+            }
+          }
+          state.selection = state.multiSelection[0] || null;
+          updateTransformHandles();
+          render();
+        } else if (evt.key.toLowerCase() === 'v') {
+          // Selection/transform mode - disable all other modes
+          state.pen = false;
+          state.bucket = false;
+          state.bend = false;
+          state.textMode = false;
+          state.rectMode = false;
+          state.ellipseMode = false;
+          state.polygonMode = false;
+          state.starMode = false;
+          state.penPath = null;
+          state.penPreview = null;
+          state.primitiveStart = null;
+          state.primitiveCurrent = null;
+          updateModeLabel();
+          render();
         } else if (evt.key.toLowerCase() === 'r') {
           const refBtn = document.getElementById('refBtn');
           state.showRef = !state.showRef; if (refBtn) refBtn.classList.toggle('active', state.showRef); render();

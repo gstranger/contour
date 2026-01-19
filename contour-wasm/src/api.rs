@@ -245,6 +245,16 @@ impl Graph {
         error::ok(self.to_svg_paths())
     }
 
+    /// Export as complete SVG document string with paths, styles, and text
+    pub fn to_svg_document(&self) -> String {
+        self.inner.to_svg_document()
+    }
+
+    /// Export as complete SVG document string (with error wrapper)
+    pub fn to_svg_document_res(&self) -> JsValue {
+        error::ok(JsValue::from_str(&self.inner.to_svg_document()))
+    }
+
     // Regions + fill
     pub fn get_regions(&mut self) -> JsValue {
         serde_wasm_bindgen::to_value(&self.inner.get_regions()).unwrap()

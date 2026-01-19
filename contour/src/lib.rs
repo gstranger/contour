@@ -1372,6 +1372,91 @@ impl Graph {
         }
     }
 
+    /// Create a regular polygon primitive that decomposes into nodes and edges.
+    ///
+    /// Arguments:
+    /// - `cx`, `cy`: Center position
+    /// - `r`: Circumradius (distance from center to vertices)
+    /// - `sides`: Number of sides (minimum 3)
+    /// - `rotation`: Starting angle in radians (0 = first vertex at right)
+    ///
+    /// Returns a `PrimitiveResult` containing the created nodes, edges, and shape.
+    pub fn add_polygon(&mut self, cx: f32, cy: f32, r: f32, sides: u32, rotation: f32) -> PrimitiveResult {
+        let sides = sides.max(3);
+        let mut node_ids = Vec::new();
+        let mut edge_ids = Vec::new();
+
+        // Create nodes at regular angles
+        for i in 0..sides {
+            let angle = rotation + (2.0 * std::f32::consts::PI * i as f32) / sides as f32;
+            let x = cx + r * angle.cos();
+            let y = cy + r * angle.sin();
+            node_ids.push(self.add_node(x, y));
+        }
+
+        // Create edges connecting consecutive nodes
+        for i in 0..sides as usize {
+            let a = node_ids[i];
+            let b = node_ids[(i + 1) % sides as usize];
+            if let Some(e) = self.add_edge(a, b) {
+                edge_ids.push(e);
+            }
+        }
+
+        // Create closed shape from edges
+        let shape_id = self.create_shape(&edge_ids, true).unwrap_or(0);
+
+        PrimitiveResult {
+            nodes: node_ids,
+            edges: edge_ids,
+            shape: shape_id,
+        }
+    }
+
+    /// Create a star primitive that decomposes into nodes and edges.
+    ///
+    /// Arguments:
+    /// - `cx`, `cy`: Center position
+    /// - `r_outer`: Outer radius (tips of star)
+    /// - `r_inner`: Inner radius (valleys between tips)
+    /// - `points`: Number of star points (minimum 3)
+    /// - `rotation`: Starting angle in radians (0 = first tip at right)
+    ///
+    /// Returns a `PrimitiveResult` containing the created nodes, edges, and shape.
+    pub fn add_star(&mut self, cx: f32, cy: f32, r_outer: f32, r_inner: f32, points: u32, rotation: f32) -> PrimitiveResult {
+        let points = points.max(3);
+        let total_vertices = points * 2; // Alternating outer/inner
+        let mut node_ids = Vec::new();
+        let mut edge_ids = Vec::new();
+
+        // Create alternating outer/inner nodes
+        for i in 0..total_vertices {
+            let angle = rotation + (2.0 * std::f32::consts::PI * i as f32) / total_vertices as f32;
+            let radius = if i % 2 == 0 { r_outer } else { r_inner };
+            let x = cx + radius * angle.cos();
+            let y = cy + radius * angle.sin();
+            node_ids.push(self.add_node(x, y));
+        }
+
+        // Create edges connecting consecutive nodes
+        for i in 0..total_vertices as usize {
+            let a = node_ids[i];
+            let b = node_ids[(i + 1) % total_vertices as usize];
+            if let Some(e) = self.add_edge(a, b) {
+                edge_ids.push(e);
+            }
+        }
+
+        // Create closed shape from edges
+        let shape_id = self.create_shape(&edge_ids, true).unwrap_or(0);
+
+        PrimitiveResult {
+            nodes: node_ids,
+            edges: edge_ids,
+            shape: shape_id,
+        }
+    }
+
     // Regions & fills
     pub fn set_flatten_tolerance(&mut self, tol: f32) {
         let tol = tol.max(0.01).min(10.0);

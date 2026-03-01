@@ -43,8 +43,14 @@ impl Graph {
             EdgeKind::Cubic { ha, hb, .. } => {
                 let cubic = CubicBezier {
                     p0: Vec2 { x: ax, y: ay },
-                    p1: Vec2 { x: ax + ha.x, y: ay + ha.y },
-                    p2: Vec2 { x: bx + hb.x, y: by + hb.y },
+                    p1: Vec2 {
+                        x: ax + ha.x,
+                        y: ay + ha.y,
+                    },
+                    p2: Vec2 {
+                        x: bx + hb.x,
+                        y: by + hb.y,
+                    },
                     p3: Vec2 { x: bx, y: by },
                 };
                 Some(cubic.arc_length(0.5))
@@ -117,8 +123,14 @@ impl Graph {
             EdgeKind::Cubic { ha, hb, .. } => {
                 let cubic = CubicBezier {
                     p0: Vec2 { x: ax, y: ay },
-                    p1: Vec2 { x: ax + ha.x, y: ay + ha.y },
-                    p2: Vec2 { x: bx + hb.x, y: by + hb.y },
+                    p1: Vec2 {
+                        x: ax + ha.x,
+                        y: ay + ha.y,
+                    },
+                    p2: Vec2 {
+                        x: bx + hb.x,
+                        y: by + hb.y,
+                    },
                     p3: Vec2 { x: bx, y: by },
                 };
                 let pos = cubic.eval(t);
@@ -170,7 +182,11 @@ impl Graph {
 
                 // Fallback to endpoint
                 let angle = (by - prev.0).atan2(bx - prev.1);
-                Some(PathPoint { x: bx, y: by, angle })
+                Some(PathPoint {
+                    x: bx,
+                    y: by,
+                    angle,
+                })
             }
         }
     }

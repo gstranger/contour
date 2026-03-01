@@ -30,5 +30,5 @@ fn set_handle_pos_invalid_end_is_noop() {
     // Convert to cubic
     assert!(g.set_edge_cubic(e, 25.0, 0.0, 75.0, 0.0));
     // Invalid end should return false and not panic
-    assert_eq!(g.set_handle_pos(e, 2, 10.0, 10.0), false);
+    assert!(!g.set_handle_pos(e, 2, 10.0, 10.0));
 }

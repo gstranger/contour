@@ -232,7 +232,12 @@ impl Default for DropShadow {
             offset_y: 4.0,
             blur_radius: 8.0,
             spread_radius: 0.0,
-            color: Color { r: 0, g: 0, b: 0, a: 128 },
+            color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 128,
+            },
         }
     }
 }
@@ -338,7 +343,12 @@ impl Default for TextStyle {
             font_size: 16.0,
             font_weight: 400,
             font_style: FontStyle::Normal,
-            fill_color: Some(Color { r: 0, g: 0, b: 0, a: 255 }),
+            fill_color: Some(Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            }),
             stroke_color: None,
             stroke_width: 0.0,
             letter_spacing: 0.0,

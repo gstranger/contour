@@ -44,6 +44,12 @@ This creates a `pkg/` folder with JS/WASM bindings.
 
 WASM unit tests are written with `wasm-bindgen-test` under `tests/`.
 
+Run in Node.js (auto-installs the matching `wasm-bindgen-cli` version from `Cargo.lock`):
+
+```bash
+./scripts/test-wasm-node.sh
+```
+
 Run in a headless browser (requires Chrome or Firefox installed). Run from the `contour-wasm/` crate directory:
 
 ```bash
@@ -63,7 +69,7 @@ For production, prefer the strict `*_res` methods which validate inputs and neve
 - `{ ok: true, value: T }` on success
 - `{ ok: false, error: { code, message, data? } }` on failure
 
-See `docs/errors.md` for error codes and invariants. A minimal TypeScript declaration is provided at `contour-wasm/types.d.ts`.
+See `docs/errors.md` for error codes and invariants. Comprehensive TypeScript declarations for the full WASM API are provided at `contour-wasm/types.d.ts`.
 
 ## Run the demo
 

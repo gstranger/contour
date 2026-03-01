@@ -61,7 +61,7 @@ fn main() {
         }
     }
 
-    let mut g = build_grid_graph(edges);
+    let g = build_grid_graph(edges);
     // Warm-up build of index
     let _ = g.pick(1.0, 1.0, tol);
 

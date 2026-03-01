@@ -28,8 +28,14 @@ impl CubicBezier {
         let mt3 = mt2 * mt;
 
         Vec2 {
-            x: mt3 * self.p0.x + 3.0 * mt2 * t * self.p1.x + 3.0 * mt * t2 * self.p2.x + t3 * self.p3.x,
-            y: mt3 * self.p0.y + 3.0 * mt2 * t * self.p1.y + 3.0 * mt * t2 * self.p2.y + t3 * self.p3.y,
+            x: mt3 * self.p0.x
+                + 3.0 * mt2 * t * self.p1.x
+                + 3.0 * mt * t2 * self.p2.x
+                + t3 * self.p3.x,
+            y: mt3 * self.p0.y
+                + 3.0 * mt2 * t * self.p1.y
+                + 3.0 * mt * t2 * self.p2.y
+                + t3 * self.p3.y,
         }
     }
 
@@ -188,7 +194,9 @@ pub fn flat_position_to_cubic_t(
     let target_length = seg_start + local_t * (seg_end - seg_start);
 
     // Convert to parameter on cubic
-    curve.parameter_at_arc_length(target_length, tolerance).unwrap_or(0.5)
+    curve
+        .parameter_at_arc_length(target_length, tolerance)
+        .unwrap_or(0.5)
 }
 
 /// Linear interpolation between two Vec2s.
@@ -201,14 +209,7 @@ fn lerp_vec2(a: Vec2, b: Vec2, t: f32) -> Vec2 {
 }
 
 /// Recursive arc length computation with adaptive subdivision.
-fn arc_length_recursive(
-    p0: Vec2,
-    p1: Vec2,
-    p2: Vec2,
-    p3: Vec2,
-    tolerance: f32,
-    depth: u32,
-) -> f32 {
+fn arc_length_recursive(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, tolerance: f32, depth: u32) -> f32 {
     const MAX_DEPTH: u32 = 16;
 
     // Chord length
@@ -305,7 +306,7 @@ mod tests {
             vec2(10.0, 0.0),
         );
 
-        let (first, second) = curve.split_at(0.3);
+        let (first, _second) = curve.split_at(0.3);
 
         // Sample points on split curves should match original
         for i in 0..=10 {

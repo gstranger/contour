@@ -294,9 +294,7 @@ pub fn planarize_subset_with_bbox(
                 if maxx1 < minx2 - ep || maxx2 < minx1 - ep {
                     continue;
                 }
-                match intersect_segments(ax, ay, bx, by, cx, cy, dx, dy, ep, ed) {
-                    _ => {}
-                }
+                intersect_segments(ax, ay, bx, by, cx, cy, dx, dy, ep, ed);
             }
         }
         // Vertical-ish
@@ -323,9 +321,7 @@ pub fn planarize_subset_with_bbox(
                 if maxy1 < miny2 - ep || maxy2 < miny1 - ep {
                     continue;
                 }
-                match intersect_segments(ax, ay, bx, by, cx, cy, dx, dy, ep, ed) {
-                    _ => {}
-                }
+                intersect_segments(ax, ay, bx, by, cx, cy, dx, dy, ep, ed);
             }
         }
     }

@@ -3,9 +3,7 @@
 //! Converts glyph outline data (received from JavaScript font library) into vector paths.
 //! The glyphs are transformed according to the text element's style and position.
 
-use crate::model::{
-    EdgeKind, GlyphOutline, GlyphPath, HandleMode, PathCommand, TextElement, TextType, Vec2,
-};
+use crate::model::{EdgeKind, GlyphOutline, GlyphPath, HandleMode, PathCommand, TextType, Vec2};
 use crate::Graph;
 
 /// Result of text-to-outlines conversion
@@ -63,13 +61,8 @@ impl Graph {
         for glyph in glyphs {
             // Process each contour in the glyph
             for path in &glyph.paths {
-                let contour_result = self.add_glyph_contour(
-                    path,
-                    current_x,
-                    base_y,
-                    scale,
-                    text.rotation,
-                );
+                let contour_result =
+                    self.add_glyph_contour(path, current_x, base_y, scale, text.rotation);
 
                 if let Some((shape_id, nodes, edges)) = contour_result {
                     result.shapes.push(shape_id);

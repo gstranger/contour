@@ -30,7 +30,10 @@ fn test_union_overlapping_squares() {
     assert!(result.is_ok());
 
     let res = result.unwrap();
-    assert!(!res.shapes.is_empty(), "Union should produce at least one shape");
+    assert!(
+        !res.shapes.is_empty(),
+        "Union should produce at least one shape"
+    );
 }
 
 #[test]
@@ -45,7 +48,10 @@ fn test_intersect_overlapping_squares() {
     assert!(result.is_ok());
 
     let res = result.unwrap();
-    assert!(!res.shapes.is_empty(), "Intersect should produce at least one shape");
+    assert!(
+        !res.shapes.is_empty(),
+        "Intersect should produce at least one shape"
+    );
 }
 
 #[test]
@@ -60,7 +66,10 @@ fn test_difference_overlapping_squares() {
     assert!(result.is_ok());
 
     let res = result.unwrap();
-    assert!(!res.shapes.is_empty(), "Difference should produce at least one shape");
+    assert!(
+        !res.shapes.is_empty(),
+        "Difference should produce at least one shape"
+    );
 }
 
 #[test]
@@ -75,7 +84,10 @@ fn test_xor_overlapping_squares() {
     assert!(result.is_ok());
 
     let res = result.unwrap();
-    assert!(!res.shapes.is_empty(), "XOR should produce at least one shape");
+    assert!(
+        !res.shapes.is_empty(),
+        "XOR should produce at least one shape"
+    );
 }
 
 #[test]
@@ -91,7 +103,11 @@ fn test_union_disjoint_squares() {
 
     let res = result.unwrap();
     // Disjoint union should produce two shapes
-    assert_eq!(res.shapes.len(), 2, "Disjoint union should produce two shapes");
+    assert_eq!(
+        res.shapes.len(),
+        2,
+        "Disjoint union should produce two shapes"
+    );
 }
 
 #[test]
@@ -107,7 +123,10 @@ fn test_intersect_disjoint_squares() {
 
     let res = result.unwrap();
     // Disjoint intersection should produce no shapes
-    assert!(res.shapes.is_empty(), "Disjoint intersection should be empty");
+    assert!(
+        res.shapes.is_empty(),
+        "Disjoint intersection should be empty"
+    );
 }
 
 #[test]
@@ -120,14 +139,22 @@ fn test_contained_square() {
 
     // Union of A containing B should just be A
     let union = g.boolean_op(shape_a, shape_b, BoolOp::Union).unwrap();
-    assert_eq!(union.shapes.len(), 1, "Union with contained shape should produce one shape");
+    assert_eq!(
+        union.shapes.len(),
+        1,
+        "Union with contained shape should produce one shape"
+    );
 
     // Intersection should be B
     let mut g2 = Graph::new();
     let a2 = create_square(&mut g2, 0.0, 0.0, 100.0);
     let b2 = create_square(&mut g2, 0.0, 0.0, 30.0);
     let inter = g2.boolean_op(a2, b2, BoolOp::Intersect).unwrap();
-    assert_eq!(inter.shapes.len(), 1, "Intersection should produce one shape");
+    assert_eq!(
+        inter.shapes.len(),
+        1,
+        "Intersection should produce one shape"
+    );
 }
 
 #[test]

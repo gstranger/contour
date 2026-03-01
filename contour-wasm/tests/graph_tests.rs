@@ -1,5 +1,7 @@
+#![cfg(target_arch = "wasm32")]
+
 use contour_wasm::Graph;
-use js_sys::{Float32Array, Reflect, Uint32Array};
+use js_sys::{Array, Float32Array, Reflect, Uint32Array};
 use serde::Deserialize;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_test::*;
@@ -77,26 +79,10 @@ fn json_roundtrip_and_clear() {
     g.add_edge(a, b).unwrap();
 
     let j = g.to_json();
-    #[derive(Deserialize)]
-    struct NodeSer {
-        id: u32,
-        x: f32,
-        y: f32,
-    }
-    #[derive(Deserialize)]
-    struct EdgeSer {
-        id: u32,
-        a: u32,
-        b: u32,
-    }
-    #[derive(Deserialize)]
-    struct Doc {
-        nodes: Vec<NodeSer>,
-        edges: Vec<EdgeSer>,
-    }
-    let doc: Doc = serde_wasm_bindgen::from_value(j.clone()).unwrap();
-    assert_eq!(doc.nodes.len(), 2);
-    assert_eq!(doc.edges.len(), 1);
+    let nodes = Array::from(&Reflect::get(&j, &JsValue::from_str("nodes")).unwrap());
+    let edges = Array::from(&Reflect::get(&j, &JsValue::from_str("edges")).unwrap());
+    assert_eq!(nodes.length(), 2);
+    assert_eq!(edges.length(), 1);
 
     // Load into a new graph
     let mut g2 = Graph::new();
@@ -134,7 +120,6 @@ fn cubic_handles() {
     struct HPick {
         kind: String,
         edge: f64,
-        end: f64,
     }
     let ph: HPick = serde_wasm_bindgen::from_value(p).unwrap();
     assert_eq!(ph.kind, "handle");
@@ -155,10 +140,14 @@ fn regions_and_toggle() {
 
     // Should find one region approximately
     let regions = g.get_regions();
-    let arr: Vec<serde_json::Value> = serde_wasm_bindgen::from_value(regions).unwrap();
-    assert!(arr.len() >= 1);
+    let arr = Array::from(&regions);
+    assert!(arr.length() >= 1);
     // Toggle first region
-    let key = arr[0].get("key").unwrap().as_u64().unwrap() as u32;
+    let first = arr.get(0);
+    let key = Reflect::get(&first, &JsValue::from_str("key"))
+        .unwrap()
+        .as_f64()
+        .unwrap() as u32;
     let after = g.toggle_region(key);
     assert!(!after);
 }

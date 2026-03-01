@@ -1,5 +1,5 @@
-pub mod model;
 pub mod layers;
+pub mod model;
 pub mod geometry {
     pub mod cubic;
     pub mod flatten;
@@ -27,8 +27,8 @@ use layers::LayerSystem;
 use model::{
     Color, ColorStop, DropShadow, Edge, EdgeKind, Effect, EffectId, EffectStack, FillRule,
     FillState, FontStyle, Gradient, GradientId, GradientUnits, HandleMode, LayerId, LinearGradient,
-    Node, Paint, PrimitiveResult, RadialGradient, Shape, SpreadMethod, TextAlign, TextElement,
-    TextId, TextStyle, TextType, Vec2, VerticalAlign, TextOverflow,
+    Node, PrimitiveResult, RadialGradient, Shape, SpreadMethod, TextAlign, TextElement, TextId,
+    TextOverflow, TextStyle, TextType, Vec2, VerticalAlign,
 };
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -64,14 +64,14 @@ pub struct RegionCache {
 }
 
 pub struct Graph {
-    pub(crate) nodes: Vec<Option<Node>>,       // id is index
-    pub(crate) edges: Vec<Option<Edge>>,       // id is index
-    pub(crate) shapes: Vec<Option<Shape>>,     // id is index
+    pub(crate) nodes: Vec<Option<Node>>,        // id is index
+    pub(crate) edges: Vec<Option<Edge>>,        // id is index
+    pub(crate) shapes: Vec<Option<Shape>>,      // id is index
     pub(crate) texts: Vec<Option<TextElement>>, // id is index
-    pub(crate) fills: HashMap<u32, FillState>, // region key -> fill
-    pub(crate) layer_system: LayerSystem,      // layer/group hierarchy
+    pub(crate) fills: HashMap<u32, FillState>,  // region key -> fill
+    pub(crate) layer_system: LayerSystem,       // layer/group hierarchy
     pub(crate) gradients: HashMap<GradientId, Gradient>, // gradient definitions
-    pub(crate) next_gradient_id: GradientId,   // next gradient ID
+    pub(crate) next_gradient_id: GradientId,    // next gradient ID
     // Effects system
     pub(crate) effects: HashMap<EffectId, Effect>,
     pub(crate) next_effect_id: EffectId,
@@ -1210,22 +1210,30 @@ impl Graph {
     /// Returns a `PrimitiveResult` containing the created nodes, edges, and shape.
     pub fn add_rectangle(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32) -> PrimitiveResult {
         let r = r.abs().min(w.abs() / 2.0).min(h.abs() / 2.0);
-        let mut node_ids = Vec::new();
+        let node_ids;
         let mut edge_ids = Vec::new();
 
         if r <= geometry::tolerance::EPS_LEN {
             // Sharp corners: 4 nodes at corners, 4 line edges
-            let n0 = self.add_node(x, y);         // top-left
-            let n1 = self.add_node(x + w, y);     // top-right
+            let n0 = self.add_node(x, y); // top-left
+            let n1 = self.add_node(x + w, y); // top-right
             let n2 = self.add_node(x + w, y + h); // bottom-right
-            let n3 = self.add_node(x, y + h);     // bottom-left
+            let n3 = self.add_node(x, y + h); // bottom-left
             node_ids = vec![n0, n1, n2, n3];
 
             // Create edges: top, right, bottom, left
-            if let Some(e0) = self.add_edge(n0, n1) { edge_ids.push(e0); }
-            if let Some(e1) = self.add_edge(n1, n2) { edge_ids.push(e1); }
-            if let Some(e2) = self.add_edge(n2, n3) { edge_ids.push(e2); }
-            if let Some(e3) = self.add_edge(n3, n0) { edge_ids.push(e3); }
+            if let Some(e0) = self.add_edge(n0, n1) {
+                edge_ids.push(e0);
+            }
+            if let Some(e1) = self.add_edge(n1, n2) {
+                edge_ids.push(e1);
+            }
+            if let Some(e2) = self.add_edge(n2, n3) {
+                edge_ids.push(e2);
+            }
+            if let Some(e3) = self.add_edge(n3, n0) {
+                edge_ids.push(e3);
+            }
         } else {
             // Rounded corners: 8 nodes (arc endpoints), 4 line edges + 4 cubic quarter-arcs
             // Kappa for circular arc approximation
@@ -1234,25 +1242,33 @@ impl Graph {
 
             // Arc endpoint nodes (clockwise from top-left arc end)
             // Top edge: from (x+r, y) to (x+w-r, y)
-            let n0 = self.add_node(x + r, y);         // top-left arc end (top side)
-            let n1 = self.add_node(x + w - r, y);     // top-right arc start (top side)
-            // Right edge: from (x+w, y+r) to (x+w, y+h-r)
-            let n2 = self.add_node(x + w, y + r);     // top-right arc end (right side)
+            let n0 = self.add_node(x + r, y); // top-left arc end (top side)
+            let n1 = self.add_node(x + w - r, y); // top-right arc start (top side)
+                                                  // Right edge: from (x+w, y+r) to (x+w, y+h-r)
+            let n2 = self.add_node(x + w, y + r); // top-right arc end (right side)
             let n3 = self.add_node(x + w, y + h - r); // bottom-right arc start (right side)
-            // Bottom edge: from (x+w-r, y+h) to (x+r, y+h)
+                                                      // Bottom edge: from (x+w-r, y+h) to (x+r, y+h)
             let n4 = self.add_node(x + w - r, y + h); // bottom-right arc end (bottom side)
-            let n5 = self.add_node(x + r, y + h);     // bottom-left arc start (bottom side)
-            // Left edge: from (x, y+h-r) to (x, y+r)
-            let n6 = self.add_node(x, y + h - r);     // bottom-left arc end (left side)
-            let n7 = self.add_node(x, y + r);         // top-left arc start (left side)
+            let n5 = self.add_node(x + r, y + h); // bottom-left arc start (bottom side)
+                                                  // Left edge: from (x, y+h-r) to (x, y+r)
+            let n6 = self.add_node(x, y + h - r); // bottom-left arc end (left side)
+            let n7 = self.add_node(x, y + r); // top-left arc start (left side)
 
             node_ids = vec![n0, n1, n2, n3, n4, n5, n6, n7];
 
             // Line edges (straight sides)
-            if let Some(e) = self.add_edge(n0, n1) { edge_ids.push(e); } // top
-            if let Some(e) = self.add_edge(n2, n3) { edge_ids.push(e); } // right
-            if let Some(e) = self.add_edge(n4, n5) { edge_ids.push(e); } // bottom
-            if let Some(e) = self.add_edge(n6, n7) { edge_ids.push(e); } // left
+            if let Some(e) = self.add_edge(n0, n1) {
+                edge_ids.push(e);
+            } // top
+            if let Some(e) = self.add_edge(n2, n3) {
+                edge_ids.push(e);
+            } // right
+            if let Some(e) = self.add_edge(n4, n5) {
+                edge_ids.push(e);
+            } // bottom
+            if let Some(e) = self.add_edge(n6, n7) {
+                edge_ids.push(e);
+            } // left
 
             // Corner arcs (cubic bezier approximations)
             // Top-right corner: n1 -> n2
@@ -1325,10 +1341,10 @@ impl Graph {
         let ky = KAPPA * ry;
 
         // 4 nodes at cardinal points (right, top, left, bottom)
-        let n_right = self.add_node(cx + rx, cy);      // 0 degrees
-        let n_top = self.add_node(cx, cy - ry);        // 90 degrees (up)
-        let n_left = self.add_node(cx - rx, cy);       // 180 degrees
-        let n_bottom = self.add_node(cx, cy + ry);     // 270 degrees (down)
+        let n_right = self.add_node(cx + rx, cy); // 0 degrees
+        let n_top = self.add_node(cx, cy - ry); // 90 degrees (up)
+        let n_left = self.add_node(cx - rx, cy); // 180 degrees
+        let n_bottom = self.add_node(cx, cy + ry); // 270 degrees (down)
 
         let node_ids = vec![n_right, n_top, n_left, n_bottom];
         let mut edge_ids = Vec::new();
@@ -1337,8 +1353,8 @@ impl Graph {
         if let Some(e) = self.add_edge(n_right, n_top) {
             if let Some(Some(edge)) = self.edges.get_mut(e as usize) {
                 edge.kind = EdgeKind::Cubic {
-                    ha: Vec2 { x: 0.0, y: -ky },   // control from right point going up
-                    hb: Vec2 { x: kx, y: 0.0 },    // control from top point going right
+                    ha: Vec2 { x: 0.0, y: -ky }, // control from right point going up
+                    hb: Vec2 { x: kx, y: 0.0 },  // control from top point going right
                     mode: HandleMode::Free,
                 };
             }
@@ -1349,8 +1365,8 @@ impl Graph {
         if let Some(e) = self.add_edge(n_top, n_left) {
             if let Some(Some(edge)) = self.edges.get_mut(e as usize) {
                 edge.kind = EdgeKind::Cubic {
-                    ha: Vec2 { x: -kx, y: 0.0 },   // control from top point going left
-                    hb: Vec2 { x: 0.0, y: -ky },   // control from left point going up
+                    ha: Vec2 { x: -kx, y: 0.0 }, // control from top point going left
+                    hb: Vec2 { x: 0.0, y: -ky }, // control from left point going up
                     mode: HandleMode::Free,
                 };
             }
@@ -1361,8 +1377,8 @@ impl Graph {
         if let Some(e) = self.add_edge(n_left, n_bottom) {
             if let Some(Some(edge)) = self.edges.get_mut(e as usize) {
                 edge.kind = EdgeKind::Cubic {
-                    ha: Vec2 { x: 0.0, y: ky },    // control from left point going down
-                    hb: Vec2 { x: -kx, y: 0.0 },   // control from bottom point going left
+                    ha: Vec2 { x: 0.0, y: ky },  // control from left point going down
+                    hb: Vec2 { x: -kx, y: 0.0 }, // control from bottom point going left
                     mode: HandleMode::Free,
                 };
             }
@@ -1373,8 +1389,8 @@ impl Graph {
         if let Some(e) = self.add_edge(n_bottom, n_right) {
             if let Some(Some(edge)) = self.edges.get_mut(e as usize) {
                 edge.kind = EdgeKind::Cubic {
-                    ha: Vec2 { x: kx, y: 0.0 },    // control from bottom point going right
-                    hb: Vec2 { x: 0.0, y: ky },    // control from right point going down
+                    ha: Vec2 { x: kx, y: 0.0 }, // control from bottom point going right
+                    hb: Vec2 { x: 0.0, y: ky }, // control from right point going down
                     mode: HandleMode::Free,
                 };
             }
@@ -1400,7 +1416,14 @@ impl Graph {
     /// - `rotation`: Starting angle in radians (0 = first vertex at right)
     ///
     /// Returns a `PrimitiveResult` containing the created nodes, edges, and shape.
-    pub fn add_polygon(&mut self, cx: f32, cy: f32, r: f32, sides: u32, rotation: f32) -> PrimitiveResult {
+    pub fn add_polygon(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        r: f32,
+        sides: u32,
+        rotation: f32,
+    ) -> PrimitiveResult {
         let sides = sides.max(3);
         let mut node_ids = Vec::new();
         let mut edge_ids = Vec::new();
@@ -1442,7 +1465,15 @@ impl Graph {
     /// - `rotation`: Starting angle in radians (0 = first tip at right)
     ///
     /// Returns a `PrimitiveResult` containing the created nodes, edges, and shape.
-    pub fn add_star(&mut self, cx: f32, cy: f32, r_outer: f32, r_inner: f32, points: u32, rotation: f32) -> PrimitiveResult {
+    pub fn add_star(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        r_outer: f32,
+        r_inner: f32,
+        points: u32,
+        rotation: f32,
+    ) -> PrimitiveResult {
         let points = points.max(3);
         let total_vertices = points * 2; // Alternating outer/inner
         let mut node_ids = Vec::new();
@@ -1977,10 +2008,18 @@ impl Graph {
         if !self.effects.contains_key(&effect_id) {
             return false;
         }
-        if self.shapes.get(shape_id as usize).and_then(|s| s.as_ref()).is_none() {
+        if self
+            .shapes
+            .get(shape_id as usize)
+            .and_then(|s| s.as_ref())
+            .is_none()
+        {
             return false;
         }
-        let stack = self.shape_effects.entry(shape_id).or_insert_with(EffectStack::new);
+        let stack = self
+            .shape_effects
+            .entry(shape_id)
+            .or_insert_with(EffectStack::new);
         if !stack.effects.contains(&effect_id) {
             stack.effects.push(effect_id);
         }
@@ -2020,7 +2059,10 @@ impl Graph {
         if !self.effects.contains_key(&effect_id) {
             return false;
         }
-        let stack = self.region_effects.entry(region_key).or_insert_with(EffectStack::new);
+        let stack = self
+            .region_effects
+            .entry(region_key)
+            .or_insert_with(EffectStack::new);
         if !stack.effects.contains(&effect_id) {
             stack.effects.push(effect_id);
         }
@@ -2060,10 +2102,18 @@ impl Graph {
         if !self.effects.contains_key(&effect_id) {
             return false;
         }
-        if self.texts.get(text_id as usize).and_then(|t| t.as_ref()).is_none() {
+        if self
+            .texts
+            .get(text_id as usize)
+            .and_then(|t| t.as_ref())
+            .is_none()
+        {
             return false;
         }
-        let stack = self.text_effects.entry(text_id).or_insert_with(EffectStack::new);
+        let stack = self
+            .text_effects
+            .entry(text_id)
+            .or_insert_with(EffectStack::new);
         if !stack.effects.contains(&effect_id) {
             stack.effects.push(effect_id);
         }
@@ -2106,7 +2156,10 @@ impl Graph {
         if !self.layer_system.groups.contains_key(&group_id) {
             return false;
         }
-        let stack = self.group_effects.entry(group_id).or_insert_with(EffectStack::new);
+        let stack = self
+            .group_effects
+            .entry(group_id)
+            .or_insert_with(EffectStack::new);
         if !stack.effects.contains(&effect_id) {
             stack.effects.push(effect_id);
         }
@@ -2358,7 +2411,12 @@ impl Graph {
         // Rotate cubic handle offsets (relative vectors)
         for &eid in edge_ids {
             if let Some(Some(e)) = self.edges.get_mut(eid as usize) {
-                if let EdgeKind::Cubic { ref mut ha, ref mut hb, .. } = e.kind {
+                if let EdgeKind::Cubic {
+                    ref mut ha,
+                    ref mut hb,
+                    ..
+                } = e.kind
+                {
                     // Rotate handle vectors (they're relative to their anchor nodes)
                     let new_ha_x = ha.x * cos_a - ha.y * sin_a;
                     let new_ha_y = ha.x * sin_a + ha.y * cos_a;
@@ -2415,7 +2473,12 @@ impl Graph {
         for &eid in edge_ids {
             if let Some(Some(e)) = self.edges.get_mut(eid as usize) {
                 // Scale handle vectors for cubic edges
-                if let EdgeKind::Cubic { ref mut ha, ref mut hb, .. } = e.kind {
+                if let EdgeKind::Cubic {
+                    ref mut ha,
+                    ref mut hb,
+                    ..
+                } = e.kind
+                {
                     ha.x *= sx;
                     ha.y *= sy;
                     hb.x *= sx;
@@ -2450,7 +2513,12 @@ impl Graph {
     pub fn create_shape(&mut self, edge_ids: &[u32], closed: bool) -> Option<u32> {
         // Validate all edge IDs exist
         for &eid in edge_ids {
-            if self.edges.get(eid as usize).and_then(|e| e.as_ref()).is_none() {
+            if self
+                .edges
+                .get(eid as usize)
+                .and_then(|e| e.as_ref())
+                .is_none()
+            {
                 return None;
             }
         }
@@ -2474,7 +2542,12 @@ impl Graph {
     ) -> Option<u32> {
         // Validate all edge IDs exist
         for &eid in edge_ids {
-            if self.edges.get(eid as usize).and_then(|e| e.as_ref()).is_none() {
+            if self
+                .edges
+                .get(eid as usize)
+                .and_then(|e| e.as_ref())
+                .is_none()
+            {
                 return None;
             }
         }
@@ -2563,7 +2636,10 @@ impl Graph {
 
         for (start_eid, edge_opt) in self.edges.iter().enumerate() {
             let start_eid = start_eid as u32;
-            if edge_opt.is_none() || used_edges.contains(&start_eid) || visited_edges.contains(&start_eid) {
+            if edge_opt.is_none()
+                || used_edges.contains(&start_eid)
+                || visited_edges.contains(&start_eid)
+            {
                 continue;
             }
 
@@ -2613,7 +2689,7 @@ impl Graph {
         let max_iterations = self.edges.len() * self.edges.len();
         let mut iterations = 0;
 
-        while let Some((current_node, path, mut visited, neighbor_idx)) = stack.pop() {
+        while let Some((current_node, path, visited, neighbor_idx)) = stack.pop() {
             iterations += 1;
             if iterations > max_iterations {
                 break;
@@ -2664,15 +2740,30 @@ impl Graph {
     /// Returns the text ID.
     pub fn add_text(&mut self, content: &str, x: f32, y: f32) -> TextId {
         let id = self.texts.len() as TextId;
-        self.texts.push(Some(TextElement::new_label(id, content.to_string(), x, y)));
+        self.texts
+            .push(Some(TextElement::new_label(id, content.to_string(), x, y)));
         id
     }
 
     /// Add a text box with wrapping at the specified position.
     /// Returns the text ID.
-    pub fn add_text_box(&mut self, content: &str, x: f32, y: f32, width: f32, height: f32) -> TextId {
+    pub fn add_text_box(
+        &mut self,
+        content: &str,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> TextId {
         let id = self.texts.len() as TextId;
-        self.texts.push(Some(TextElement::new_box(id, content.to_string(), x, y, width, height)));
+        self.texts.push(Some(TextElement::new_box(
+            id,
+            content.to_string(),
+            x,
+            y,
+            width,
+            height,
+        )));
         id
     }
 
@@ -2680,7 +2771,11 @@ impl Graph {
     /// Returns the text ID.
     pub fn add_text_on_path(&mut self, content: &str, edge_ids: Vec<u32>) -> TextId {
         let id = self.texts.len() as TextId;
-        self.texts.push(Some(TextElement::new_on_path(id, content.to_string(), edge_ids)));
+        self.texts.push(Some(TextElement::new_on_path(
+            id,
+            content.to_string(),
+            edge_ids,
+        )));
         id
     }
 
@@ -2776,7 +2871,12 @@ impl Graph {
             let avg_scale = (sx.abs() + sy.abs()) / 2.0;
             text.style.font_size *= avg_scale;
             // Also scale box dimensions if it's a text box
-            if let TextType::Box { ref mut width, ref mut height, .. } = text.text_type {
+            if let TextType::Box {
+                ref mut width,
+                ref mut height,
+                ..
+            } = text.text_type
+            {
                 *width *= sx.abs();
                 *height *= sy.abs();
             }
@@ -2900,10 +3000,20 @@ impl Graph {
     }
 
     /// Convert a text element to text on path.
-    pub fn convert_text_to_on_path(&mut self, id: TextId, edge_ids: Vec<u32>, start_offset: f32) -> bool {
+    pub fn convert_text_to_on_path(
+        &mut self,
+        id: TextId,
+        edge_ids: Vec<u32>,
+        start_offset: f32,
+    ) -> bool {
         // Validate edge IDs
         for &eid in &edge_ids {
-            if self.edges.get(eid as usize).and_then(|e| e.as_ref()).is_none() {
+            if self
+                .edges
+                .get(eid as usize)
+                .and_then(|e| e.as_ref())
+                .is_none()
+            {
                 return false;
             }
         }
@@ -2929,7 +3039,12 @@ impl Graph {
     /// Set text box dimensions (only for text box type).
     pub fn set_text_box_size(&mut self, id: TextId, width: f32, height: f32) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
-            if let TextType::Box { vertical_align, overflow, .. } = text.text_type {
+            if let TextType::Box {
+                vertical_align,
+                overflow,
+                ..
+            } = text.text_type
+            {
                 text.text_type = TextType::Box {
                     width,
                     height,
@@ -2945,7 +3060,13 @@ impl Graph {
     /// Set text box vertical alignment.
     pub fn set_text_box_vertical_align(&mut self, id: TextId, align: VerticalAlign) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
-            if let TextType::Box { width, height, overflow, .. } = text.text_type {
+            if let TextType::Box {
+                width,
+                height,
+                overflow,
+                ..
+            } = text.text_type
+            {
                 text.text_type = TextType::Box {
                     width,
                     height,
@@ -2961,7 +3082,13 @@ impl Graph {
     /// Set text box overflow behavior.
     pub fn set_text_box_overflow(&mut self, id: TextId, overflow: TextOverflow) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
-            if let TextType::Box { width, height, vertical_align, .. } = text.text_type {
+            if let TextType::Box {
+                width,
+                height,
+                vertical_align,
+                ..
+            } = text.text_type
+            {
                 text.text_type = TextType::Box {
                     width,
                     height,
@@ -2993,7 +3120,12 @@ impl Graph {
     pub fn set_text_path_edges(&mut self, id: TextId, edge_ids: Vec<u32>) -> bool {
         // Validate edge IDs
         for &eid in &edge_ids {
-            if self.edges.get(eid as usize).and_then(|e| e.as_ref()).is_none() {
+            if self
+                .edges
+                .get(eid as usize)
+                .and_then(|e| e.as_ref())
+                .is_none()
+            {
                 return false;
             }
         }

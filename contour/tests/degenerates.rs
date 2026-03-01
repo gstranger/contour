@@ -1,4 +1,3 @@
-use contour::model::HandleMode;
 use contour::Graph;
 use std::f32;
 
@@ -173,7 +172,7 @@ fn fuzz_10k_random_edits_no_panic() {
                 // toggle region if any (rare)
                 if step % 197 == 0 {
                     let regs = g.get_regions();
-                    if let Some(r) = regs.get(0) {
+                    if let Some(r) = regs.first() {
                         if let Some(k) = r.get("key").and_then(|v| v.as_u64()) {
                             let _ = g.toggle_region(k as u32);
                         }

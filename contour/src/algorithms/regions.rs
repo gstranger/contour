@@ -784,11 +784,10 @@ pub fn get_regions_with_fill(g: &mut Graph) -> Vec<serde_json::Value> {
                 best = match best {
                     None => Some((*k_old, d2, ad)),
                     Some((bk, bd, ba)) => {
-                        if d2 < bd {
-                            Some((*k_old, d2, ad))
-                        } else if d2 == bd && ad < ba {
-                            Some((*k_old, d2, ad))
-                        } else if d2 == bd && (ad - ba).abs() <= f32::EPSILON && *k_old < bk {
+                        if d2 < bd
+                            || (d2 == bd
+                                && (ad < ba || ((ad - ba).abs() <= f32::EPSILON && *k_old < bk)))
+                        {
                             Some((*k_old, d2, ad))
                         } else {
                             Some((bk, bd, ba))

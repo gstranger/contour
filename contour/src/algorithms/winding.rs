@@ -214,7 +214,7 @@ mod tests {
         assert_eq!(crossing_number(15.0, 5.0, &square), 0);
 
         // Even-odd rule: inside = odd crossings, outside = even crossings
-        assert!(point_in_polygon_evenodd(5.0, 5.0, &square));  // 1 = odd = inside
+        assert!(point_in_polygon_evenodd(5.0, 5.0, &square)); // 1 = odd = inside
         assert!(!point_in_polygon_evenodd(-5.0, 5.0, &square)); // 2 = even = outside
         assert!(!point_in_polygon_evenodd(15.0, 5.0, &square)); // 0 = even = outside
     }

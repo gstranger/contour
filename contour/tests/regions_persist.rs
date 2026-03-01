@@ -145,12 +145,12 @@ fn quick_persistence_smoke() {
         if ea.ids.is_empty() {
             break;
         }
-        let i = ((seed as usize) % ea.ids.len());
+        let i = (seed as usize) % ea.ids.len();
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
         let eid = ea.ids[i];
         let t = (((seed >> 8) as f32) / (u32::MAX as f32)).min(1.0).max(0.0);
-        let tx = ((seed >> 16) as f32 % 200.0);
-        let ty = ((seed >> 24) as f32 % 200.0);
+        let tx = (seed >> 16) as f32 % 200.0;
+        let ty = (seed >> 24) as f32 % 200.0;
         let _ = g.bend_edge_to(eid, t, tx, ty, 1.0);
         if step % 20 == 0 {
             let _ = g.get_regions();
@@ -299,7 +299,7 @@ fn release_persistence_1k() {
             if ea.ids.is_empty() {
                 continue;
             }
-            let i = ((seed as usize) % ea.ids.len());
+            let i = (seed as usize) % ea.ids.len();
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
             let eid = ea.ids[i];
             let t = (((seed >> 24) as f32) / (u32::MAX as f32))

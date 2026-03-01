@@ -1,5 +1,5 @@
-use crate::Graph;
 use crate::interop::{new_obj, set_kv};
+use crate::Graph;
 use js_sys::{Float32Array, Uint32Array};
 use wasm_bindgen::prelude::*;
 type JsValue = wasm_bindgen::JsValue;
@@ -601,7 +601,8 @@ impl Graph {
     ) -> u32 {
         let nids = to_u32_vec(node_ids);
         let eids = to_u32_vec(edge_ids);
-        self.inner.scale_selection(&nids, &eids, cx, cy, sx, sy, scale_stroke)
+        self.inner
+            .scale_selection(&nids, &eids, cx, cy, sx, sy, scale_stroke)
     }
 
     /// Scale selected elements from a pivot point (with validation).
@@ -620,7 +621,9 @@ impl Graph {
         }
         let nids = to_u32_vec(node_ids);
         let eids = to_u32_vec(edge_ids);
-        let moved = self.inner.scale_selection(&nids, &eids, cx, cy, sx, sy, scale_stroke);
+        let moved = self
+            .inner
+            .scale_selection(&nids, &eids, cx, cy, sx, sy, scale_stroke);
         error::ok(JsValue::from_f64(moved as f64))
     }
 
@@ -637,7 +640,9 @@ impl Graph {
         if self.inner.get_text(id).is_none() {
             return error::invalid_id("text", id);
         }
-        error::ok(JsValue::from_bool(self.inner.rotate_text_around(id, cx, cy, angle)))
+        error::ok(JsValue::from_bool(
+            self.inner.rotate_text_around(id, cx, cy, angle),
+        ))
     }
 
     /// Scale a text element from a pivot point.
@@ -660,7 +665,9 @@ impl Graph {
         if self.inner.get_text(id).is_none() {
             return error::invalid_id("text", id);
         }
-        error::ok(JsValue::from_bool(self.inner.scale_text_around(id, cx, cy, sx, sy)))
+        error::ok(JsValue::from_bool(
+            self.inner.scale_text_around(id, cx, cy, sx, sy),
+        ))
     }
 
     // Polylines
@@ -851,7 +858,14 @@ impl Graph {
         .unwrap()
     }
 
-    pub fn add_polygon_res(&mut self, cx: f32, cy: f32, r: f32, sides: u32, rotation: f32) -> JsValue {
+    pub fn add_polygon_res(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        r: f32,
+        sides: u32,
+        rotation: f32,
+    ) -> JsValue {
         for (n, v) in [("cx", cx), ("cy", cy), ("r", r), ("rotation", rotation)] {
             if !v.is_finite() {
                 return error::non_finite(n);
@@ -876,8 +890,18 @@ impl Graph {
 
     /// Create a star primitive
     /// Returns { nodes: [...], edges: [...], shape: id }
-    pub fn add_star(&mut self, cx: f32, cy: f32, r_outer: f32, r_inner: f32, points: u32, rotation: f32) -> JsValue {
-        let result = self.inner.add_star(cx, cy, r_outer, r_inner, points, rotation);
+    pub fn add_star(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        r_outer: f32,
+        r_inner: f32,
+        points: u32,
+        rotation: f32,
+    ) -> JsValue {
+        let result = self
+            .inner
+            .add_star(cx, cy, r_outer, r_inner, points, rotation);
         serde_wasm_bindgen::to_value(&serde_json::json!({
             "nodes": result.nodes,
             "edges": result.edges,
@@ -886,8 +910,22 @@ impl Graph {
         .unwrap()
     }
 
-    pub fn add_star_res(&mut self, cx: f32, cy: f32, r_outer: f32, r_inner: f32, points: u32, rotation: f32) -> JsValue {
-        for (n, v) in [("cx", cx), ("cy", cy), ("r_outer", r_outer), ("r_inner", r_inner), ("rotation", rotation)] {
+    pub fn add_star_res(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        r_outer: f32,
+        r_inner: f32,
+        points: u32,
+        rotation: f32,
+    ) -> JsValue {
+        for (n, v) in [
+            ("cx", cx),
+            ("cy", cy),
+            ("r_outer", r_outer),
+            ("r_inner", r_inner),
+            ("rotation", rotation),
+        ] {
             if !v.is_finite() {
                 return error::non_finite(n);
             }
@@ -901,7 +939,9 @@ impl Graph {
         if points < 3 {
             return error::out_of_range("points", 3.0, f32::INFINITY, points as f32);
         }
-        let result = self.inner.add_star(cx, cy, r_outer, r_inner, points, rotation);
+        let result = self
+            .inner
+            .add_star(cx, cy, r_outer, r_inner, points, rotation);
         error::ok(
             serde_wasm_bindgen::to_value(&serde_json::json!({
                 "nodes": result.nodes,
@@ -921,7 +961,7 @@ impl Graph {
 
     pub fn create_layer_res(&mut self, name: &str) -> JsValue {
         error::ok(JsValue::from_f64(
-            self.inner.create_layer(name.to_string()) as f64,
+            self.inner.create_layer(name.to_string()) as f64
         ))
     }
 
@@ -1162,7 +1202,8 @@ impl Graph {
         let stops_vec = parse_color_stops(stops);
         let units = parse_gradient_units(units);
         let spread = parse_spread_method(spread);
-        self.inner.add_linear_gradient(x1, y1, x2, y2, stops_vec, units, spread)
+        self.inner
+            .add_linear_gradient(x1, y1, x2, y2, stops_vec, units, spread)
     }
 
     pub fn add_linear_gradient_res(
@@ -1180,11 +1221,17 @@ impl Graph {
         }
         let stops_vec = parse_color_stops(stops);
         if stops_vec.is_empty() {
-            return error::err("invalid_stops", "gradient must have at least one color stop", None);
+            return error::err(
+                "invalid_stops",
+                "gradient must have at least one color stop",
+                None,
+            );
         }
         let units = parse_gradient_units(units);
         let spread = parse_spread_method(spread);
-        let id = self.inner.add_linear_gradient(x1, y1, x2, y2, stops_vec, units, spread);
+        let id = self
+            .inner
+            .add_linear_gradient(x1, y1, x2, y2, stops_vec, units, spread);
         error::ok(JsValue::from_f64(id as f64))
     }
 
@@ -1203,7 +1250,8 @@ impl Graph {
         let stops_vec = parse_color_stops(stops);
         let units = parse_gradient_units(units);
         let spread = parse_spread_method(spread);
-        self.inner.add_radial_gradient(cx, cy, r, fx, fy, stops_vec, units, spread)
+        self.inner
+            .add_radial_gradient(cx, cy, r, fx, fy, stops_vec, units, spread)
     }
 
     pub fn add_radial_gradient_res(
@@ -1217,16 +1265,27 @@ impl Graph {
         units: u8,
         spread: u8,
     ) -> JsValue {
-        if !cx.is_finite() || !cy.is_finite() || !r.is_finite() || !fx.is_finite() || !fy.is_finite() {
+        if !cx.is_finite()
+            || !cy.is_finite()
+            || !r.is_finite()
+            || !fx.is_finite()
+            || !fy.is_finite()
+        {
             return error::non_finite("coordinates");
         }
         let stops_vec = parse_color_stops(stops);
         if stops_vec.is_empty() {
-            return error::err("invalid_stops", "gradient must have at least one color stop", None);
+            return error::err(
+                "invalid_stops",
+                "gradient must have at least one color stop",
+                None,
+            );
         }
         let units = parse_gradient_units(units);
         let spread = parse_spread_method(spread);
-        let id = self.inner.add_radial_gradient(cx, cy, r, fx, fy, stops_vec, units, spread);
+        let id = self
+            .inner
+            .add_radial_gradient(cx, cy, r, fx, fy, stops_vec, units, spread);
         error::ok(JsValue::from_f64(id as f64))
     }
 
@@ -1290,10 +1349,16 @@ impl Graph {
 
     /// Set edge stroke to a gradient
     pub fn set_edge_stroke_gradient(&mut self, edge_id: u32, gradient_id: u32, width: f32) -> bool {
-        self.inner.set_edge_stroke_gradient(edge_id, gradient_id, width)
+        self.inner
+            .set_edge_stroke_gradient(edge_id, gradient_id, width)
     }
 
-    pub fn set_edge_stroke_gradient_res(&mut self, edge_id: u32, gradient_id: u32, width: f32) -> JsValue {
+    pub fn set_edge_stroke_gradient_res(
+        &mut self,
+        edge_id: u32,
+        gradient_id: u32,
+        width: f32,
+    ) -> JsValue {
         if !edge_exists(&self.inner, edge_id) {
             return error::invalid_id("edge", edge_id);
         }
@@ -1303,10 +1368,17 @@ impl Graph {
         if !width.is_finite() {
             return error::non_finite("width");
         }
-        if self.inner.set_edge_stroke_gradient(edge_id, gradient_id, width) {
+        if self
+            .inner
+            .set_edge_stroke_gradient(edge_id, gradient_id, width)
+        {
             error::ok(JsValue::from_bool(true))
         } else {
-            error::err("stroke_gradient_failed", "failed to set stroke gradient", None)
+            error::err(
+                "stroke_gradient_failed",
+                "failed to set stroke gradient",
+                None,
+            )
         }
     }
 
@@ -1424,11 +1496,19 @@ impl Graph {
 
     /// Perform union of two shapes (A ∪ B)
     pub fn boolean_union(&mut self, shape_a: u32, shape_b: u32) -> JsValue {
-        self.boolean_op_impl(shape_a, shape_b, contour::algorithms::boolean::BoolOp::Union)
+        self.boolean_op_impl(
+            shape_a,
+            shape_b,
+            contour::algorithms::boolean::BoolOp::Union,
+        )
     }
 
     pub fn boolean_union_res(&mut self, shape_a: u32, shape_b: u32) -> JsValue {
-        self.boolean_op_res_impl(shape_a, shape_b, contour::algorithms::boolean::BoolOp::Union)
+        self.boolean_op_res_impl(
+            shape_a,
+            shape_b,
+            contour::algorithms::boolean::BoolOp::Union,
+        )
     }
 
     /// Perform intersection of two shapes (A ∩ B)
@@ -1481,14 +1561,12 @@ impl Graph {
         op: contour::algorithms::boolean::BoolOp,
     ) -> JsValue {
         match self.inner.boolean_op(shape_a, shape_b, op) {
-            Ok(result) => {
-                serde_wasm_bindgen::to_value(&serde_json::json!({
-                    "shapes": result.shapes,
-                    "nodes": result.nodes,
-                    "edges": result.edges
-                }))
-                .unwrap()
-            }
+            Ok(result) => serde_wasm_bindgen::to_value(&serde_json::json!({
+                "shapes": result.shapes,
+                "nodes": result.nodes,
+                "edges": result.edges
+            }))
+            .unwrap(),
             Err(_) => JsValue::NULL,
         }
     }
@@ -1508,16 +1586,14 @@ impl Graph {
         }
 
         match self.inner.boolean_op(shape_a, shape_b, op) {
-            Ok(result) => {
-                error::ok(
-                    serde_wasm_bindgen::to_value(&serde_json::json!({
-                        "shapes": result.shapes,
-                        "nodes": result.nodes,
-                        "edges": result.edges
-                    }))
-                    .unwrap(),
-                )
-            }
+            Ok(result) => error::ok(
+                serde_wasm_bindgen::to_value(&serde_json::json!({
+                    "shapes": result.shapes,
+                    "nodes": result.nodes,
+                    "edges": result.edges
+                }))
+                .unwrap(),
+            ),
             Err(e) => {
                 let msg = format!("{:?}", e);
                 error::err("boolean_op_failed", &msg, None)
@@ -1548,7 +1624,14 @@ impl Graph {
         self.inner.add_text_box(content, x, y, width, height)
     }
 
-    pub fn add_text_box_res(&mut self, content: &str, x: f32, y: f32, width: f32, height: f32) -> JsValue {
+    pub fn add_text_box_res(
+        &mut self,
+        content: &str,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> JsValue {
         for (n, v) in [("x", x), ("y", y), ("width", width), ("height", height)] {
             if !v.is_finite() {
                 return error::non_finite(n);
@@ -1676,7 +1759,9 @@ impl Graph {
         if self.inner.get_text(id).is_none() {
             return error::invalid_id("text", id);
         }
-        error::ok(JsValue::from_bool(self.inner.set_text_rotation(id, radians)))
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_rotation(id, radians),
+        ))
     }
 
     /// Set text alignment (0 = Left, 1 = Center, 2 = Right)
@@ -1702,7 +1787,9 @@ impl Graph {
             1 => contour::model::TextAlign::Center,
             _ => contour::model::TextAlign::Right,
         };
-        error::ok(JsValue::from_bool(self.inner.set_text_align(id, text_align)))
+        error::ok(JsValue::from_bool(
+            self.inner.set_text_align(id, text_align),
+        ))
     }
 
     /// Set font family and size
@@ -1720,9 +1807,11 @@ impl Graph {
         if font_size <= 0.0 {
             return error::out_of_range("font_size", 0.0, f32::INFINITY, font_size);
         }
-        error::ok(JsValue::from_bool(
-            self.inner.set_text_font(id, font_family, font_size),
-        ))
+        error::ok(JsValue::from_bool(self.inner.set_text_font(
+            id,
+            font_family,
+            font_size,
+        )))
     }
 
     /// Set font weight (100-900)
@@ -1873,7 +1962,11 @@ impl Graph {
             return error::non_finite("dimensions");
         }
         if width <= 0.0 || height <= 0.0 {
-            return error::err("invalid_dimensions", "width and height must be positive", None);
+            return error::err(
+                "invalid_dimensions",
+                "width and height must be positive",
+                None,
+            );
         }
         error::ok(JsValue::from_bool(
             self.inner.convert_text_to_box(id, width, height),
@@ -1881,14 +1974,24 @@ impl Graph {
     }
 
     /// Convert text to text on path
-    pub fn convert_text_to_on_path(&mut self, id: u32, edge_ids: &Uint32Array, start_offset: f32) -> bool {
+    pub fn convert_text_to_on_path(
+        &mut self,
+        id: u32,
+        edge_ids: &Uint32Array,
+        start_offset: f32,
+    ) -> bool {
         let len = edge_ids.length() as usize;
         let mut ids = vec![0u32; len];
         edge_ids.copy_to(&mut ids);
         self.inner.convert_text_to_on_path(id, ids, start_offset)
     }
 
-    pub fn convert_text_to_on_path_res(&mut self, id: u32, edge_ids: &Uint32Array, start_offset: f32) -> JsValue {
+    pub fn convert_text_to_on_path_res(
+        &mut self,
+        id: u32,
+        edge_ids: &Uint32Array,
+        start_offset: f32,
+    ) -> JsValue {
         if self.inner.get_text(id).is_none() {
             return error::invalid_id("text", id);
         }
@@ -1903,9 +2006,11 @@ impl Graph {
         if !start_offset.is_finite() {
             return error::non_finite("start_offset");
         }
-        error::ok(JsValue::from_bool(
-            self.inner.convert_text_to_on_path(id, ids, start_offset),
-        ))
+        error::ok(JsValue::from_bool(self.inner.convert_text_to_on_path(
+            id,
+            ids,
+            start_offset,
+        )))
     }
 
     /// Convert text back to simple label
@@ -1933,7 +2038,11 @@ impl Graph {
             return error::non_finite("dimensions");
         }
         if width <= 0.0 || height <= 0.0 {
-            return error::err("invalid_dimensions", "width and height must be positive", None);
+            return error::err(
+                "invalid_dimensions",
+                "width and height must be positive",
+                None,
+            );
         }
         error::ok(JsValue::from_bool(
             self.inner.set_text_box_size(id, width, height),
@@ -2033,9 +2142,7 @@ impl Graph {
                 return error::invalid_id("edge", eid);
             }
         }
-        error::ok(JsValue::from_bool(
-            self.inner.set_text_path_edges(id, ids),
-        ))
+        error::ok(JsValue::from_bool(self.inner.set_text_path_edges(id, ids)))
     }
 
     /// Convert text to vector outlines using glyph data from JavaScript.
@@ -2162,7 +2269,9 @@ impl Graph {
         let mut widths = vec![0.0f32; widths_len];
         char_widths.copy_to(&mut widths);
 
-        let positions = self.inner.sample_text_positions(&ids, &widths, start_offset);
+        let positions = self
+            .inner
+            .sample_text_positions(&ids, &widths, start_offset);
         let result: Vec<_> = positions
             .iter()
             .map(|p| {
@@ -2201,7 +2310,9 @@ impl Graph {
             return error::non_finite("char_widths");
         }
 
-        let positions = self.inner.sample_text_positions(&ids, &widths, start_offset);
+        let positions = self
+            .inner
+            .sample_text_positions(&ids, &widths, start_offset);
         let result: Vec<_> = positions
             .iter()
             .map(|p| {
@@ -2231,7 +2342,7 @@ impl Graph {
         vertical_align: u8,
     ) -> JsValue {
         use contour::algorithms::text_layout::layout_text_box;
-        use contour::model::{TextAlign, TextStyle, VerticalAlign, FontStyle};
+        use contour::model::{FontStyle, TextAlign, TextStyle, VerticalAlign};
 
         let style = TextStyle {
             font_family: String::new(),
@@ -2261,22 +2372,29 @@ impl Graph {
         let mut widths = vec![0.0f32; widths_len];
         char_widths.copy_to(&mut widths);
 
-        let layout = layout_text_box(content, width, height, &style, &widths, text_align, vert_align);
+        let layout = layout_text_box(
+            content, width, height, &style, &widths, text_align, vert_align,
+        );
 
-        let lines: Vec<_> = layout.lines.iter().map(|l| {
-            serde_json::json!({
-                "text": l.text,
-                "x_offset": l.x_offset,
-                "y_offset": l.y_offset,
-                "width": l.width
+        let lines: Vec<_> = layout
+            .lines
+            .iter()
+            .map(|l| {
+                serde_json::json!({
+                    "text": l.text,
+                    "x_offset": l.x_offset,
+                    "y_offset": l.y_offset,
+                    "width": l.width
+                })
             })
-        }).collect();
+            .collect();
 
         serde_wasm_bindgen::to_value(&serde_json::json!({
             "lines": lines,
             "total_height": layout.total_height,
             "truncated": layout.truncated
-        })).unwrap_or(JsValue::NULL)
+        }))
+        .unwrap_or(JsValue::NULL)
     }
 
     pub fn layout_text_box_res(
@@ -2292,7 +2410,7 @@ impl Graph {
         vertical_align: u8,
     ) -> JsValue {
         use contour::algorithms::text_layout::layout_text_box;
-        use contour::model::{TextAlign, TextStyle, VerticalAlign, FontStyle};
+        use contour::model::{FontStyle, TextAlign, TextStyle, VerticalAlign};
 
         if !width.is_finite() {
             return error::non_finite("width");
@@ -2301,10 +2419,18 @@ impl Graph {
             return error::non_finite("height");
         }
         if !font_size.is_finite() || font_size <= 0.0 {
-            return error::err("INVALID_FONT_SIZE", "font_size must be positive and finite", None);
+            return error::err(
+                "INVALID_FONT_SIZE",
+                "font_size must be positive and finite",
+                None,
+            );
         }
         if !line_height.is_finite() || line_height <= 0.0 {
-            return error::err("INVALID_LINE_HEIGHT", "line_height must be positive and finite", None);
+            return error::err(
+                "INVALID_LINE_HEIGHT",
+                "line_height must be positive and finite",
+                None,
+            );
         }
         if !letter_spacing.is_finite() {
             return error::non_finite("letter_spacing");
@@ -2342,22 +2468,31 @@ impl Graph {
             return error::non_finite("char_widths");
         }
 
-        let layout = layout_text_box(content, width, height, &style, &widths, text_align, vert_align);
+        let layout = layout_text_box(
+            content, width, height, &style, &widths, text_align, vert_align,
+        );
 
-        let lines: Vec<_> = layout.lines.iter().map(|l| {
-            serde_json::json!({
-                "text": l.text,
-                "x_offset": l.x_offset,
-                "y_offset": l.y_offset,
-                "width": l.width
+        let lines: Vec<_> = layout
+            .lines
+            .iter()
+            .map(|l| {
+                serde_json::json!({
+                    "text": l.text,
+                    "x_offset": l.x_offset,
+                    "y_offset": l.y_offset,
+                    "width": l.width
+                })
             })
-        }).collect();
+            .collect();
 
-        error::ok(serde_wasm_bindgen::to_value(&serde_json::json!({
-            "lines": lines,
-            "total_height": layout.total_height,
-            "truncated": layout.truncated
-        })).unwrap_or(JsValue::NULL))
+        error::ok(
+            serde_wasm_bindgen::to_value(&serde_json::json!({
+                "lines": lines,
+                "total_height": layout.total_height,
+                "truncated": layout.truncated
+            }))
+            .unwrap_or(JsValue::NULL),
+        )
     }
 
     // ========== Effects System ==========
@@ -2430,7 +2565,9 @@ impl Graph {
 
     pub fn get_effect_res(&self, id: u32) -> JsValue {
         match self.inner.get_effect(id) {
-            Some(effect) => error::ok(serde_wasm_bindgen::to_value(effect).unwrap_or(JsValue::NULL)),
+            Some(effect) => {
+                error::ok(serde_wasm_bindgen::to_value(effect).unwrap_or(JsValue::NULL))
+            }
             None => error::invalid_id("effect", id),
         }
     }
@@ -2525,7 +2662,9 @@ impl Graph {
         if self.inner.get_effect(effect_id).is_none() {
             return error::invalid_id("effect", effect_id);
         }
-        error::ok(JsValue::from_bool(self.inner.add_effect_to_shape(shape_id, effect_id)))
+        error::ok(JsValue::from_bool(
+            self.inner.add_effect_to_shape(shape_id, effect_id),
+        ))
     }
 
     /// Remove an effect from a shape
@@ -2557,7 +2696,9 @@ impl Graph {
         if self.inner.get_effect(effect_id).is_none() {
             return error::invalid_id("effect", effect_id);
         }
-        error::ok(JsValue::from_bool(self.inner.add_effect_to_region(region_key, effect_id)))
+        error::ok(JsValue::from_bool(
+            self.inner.add_effect_to_region(region_key, effect_id),
+        ))
     }
 
     /// Remove an effect from a region
@@ -2592,7 +2733,9 @@ impl Graph {
         if self.inner.get_text(text_id).is_none() {
             return error::invalid_id("text", text_id);
         }
-        error::ok(JsValue::from_bool(self.inner.add_effect_to_text(text_id, effect_id)))
+        error::ok(JsValue::from_bool(
+            self.inner.add_effect_to_text(text_id, effect_id),
+        ))
     }
 
     /// Remove an effect from a text element
@@ -2624,7 +2767,9 @@ impl Graph {
         if self.inner.get_effect(effect_id).is_none() {
             return error::invalid_id("effect", effect_id);
         }
-        error::ok(JsValue::from_bool(self.inner.add_effect_to_group(group_id, effect_id)))
+        error::ok(JsValue::from_bool(
+            self.inner.add_effect_to_group(group_id, effect_id),
+        ))
     }
 
     /// Remove an effect from a group
@@ -2668,7 +2813,7 @@ fn to_u32_vec(arr: &Uint32Array) -> Vec<u32> {
 
 fn edge_exists(g: &contour::Graph, id: u32) -> bool {
     let ea = g.get_edge_arrays();
-    ea.ids.iter().any(|&x| x == id)
+    ea.ids.contains(&id)
 }
 
 fn region_exists(g: &mut contour::Graph, key: u32) -> bool {
@@ -2699,7 +2844,8 @@ fn parse_color_stops(stops: &JsValue) -> Vec<contour::model::ColorStop> {
         a: u8,
     }
 
-    let stops_arr: Vec<ColorStopJs> = serde_wasm_bindgen::from_value(stops.clone()).unwrap_or_default();
+    let stops_arr: Vec<ColorStopJs> =
+        serde_wasm_bindgen::from_value(stops.clone()).unwrap_or_default();
     stops_arr
         .into_iter()
         .map(|s| contour::model::ColorStop {
@@ -2746,10 +2892,28 @@ fn parse_glyph_data(data: &JsValue) -> Vec<contour::model::GlyphOutline> {
     #[derive(serde::Deserialize)]
     #[serde(tag = "type", rename_all = "camelCase")]
     enum CommandJs {
-        MoveTo { x: f32, y: f32 },
-        LineTo { x: f32, y: f32 },
-        QuadTo { cx: f32, cy: f32, x: f32, y: f32 },
-        CubicTo { c1x: f32, c1y: f32, c2x: f32, c2y: f32, x: f32, y: f32 },
+        MoveTo {
+            x: f32,
+            y: f32,
+        },
+        LineTo {
+            x: f32,
+            y: f32,
+        },
+        QuadTo {
+            cx: f32,
+            cy: f32,
+            x: f32,
+            y: f32,
+        },
+        CubicTo {
+            c1x: f32,
+            c1y: f32,
+            c2x: f32,
+            c2y: f32,
+            x: f32,
+            y: f32,
+        },
         Close,
     }
 
@@ -2773,9 +2937,14 @@ fn parse_glyph_data(data: &JsValue) -> Vec<contour::model::GlyphOutline> {
                             CommandJs::QuadTo { cx, cy, x, y } => {
                                 contour::model::PathCommand::QuadTo(cx, cy, x, y)
                             }
-                            CommandJs::CubicTo { c1x, c1y, c2x, c2y, x, y } => {
-                                contour::model::PathCommand::CubicTo(c1x, c1y, c2x, c2y, x, y)
-                            }
+                            CommandJs::CubicTo {
+                                c1x,
+                                c1y,
+                                c2x,
+                                c2y,
+                                x,
+                                y,
+                            } => contour::model::PathCommand::CubicTo(c1x, c1y, c2x, c2y, x, y),
                             CommandJs::Close => contour::model::PathCommand::Close,
                         })
                         .collect(),

@@ -57,8 +57,8 @@ pub fn layout_text_box(
     let mut last_word_boundary_width = 0.0;
 
     for (i, ch) in chars.iter().enumerate() {
-        let char_width = char_widths.get(i).copied().unwrap_or(style.font_size * 0.5)
-            + letter_spacing_px;
+        let char_width =
+            char_widths.get(i).copied().unwrap_or(style.font_size * 0.5) + letter_spacing_px;
 
         // Check for newline
         if *ch == '\n' {
@@ -87,8 +87,9 @@ pub fn layout_text_box(
             // Wrap at word boundary if possible
             let wrap_at = if last_word_boundary > current_line_start {
                 // Wrap at last word boundary
-                let line_text: String =
-                    chars[current_line_start..last_word_boundary].iter().collect();
+                let line_text: String = chars[current_line_start..last_word_boundary]
+                    .iter()
+                    .collect();
                 let line_w = last_word_boundary_width - letter_spacing_px;
                 lines.push(LayoutLine {
                     text: line_text.trim_end().to_string(),
@@ -183,8 +184,11 @@ pub fn get_character_positions(
 
     for line in &layout.lines {
         let mut x = line.x_offset;
-        for ch in line.text.chars() {
-            let width = char_widths.get(char_idx).copied().unwrap_or(font_size * 0.5);
+        for _ch in line.text.chars() {
+            let width = char_widths
+                .get(char_idx)
+                .copied()
+                .unwrap_or(font_size * 0.5);
             positions.push((x, line.y_offset, width));
             x += width + letter_spacing_px;
             char_idx += 1;

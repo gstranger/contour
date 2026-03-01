@@ -5,6 +5,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CRATE_DIR="$ROOT/contour-wasm"
 NPM_DIR="$ROOT/npm"
 PKG_DIR="$NPM_DIR/pkg"
+TYPES_SOURCE="$CRATE_DIR/types.d.ts"
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$CRATE_DIR/Cargo.toml" | head -n1)
 
 if [[ -z "$VERSION" ]]; then
@@ -12,7 +13,7 @@ if [[ -z "$VERSION" ]]; then
   exit 1
 fi
 
-echo "Building contour npm artifacts v$VERSION"
+echo "Building vecnet-wasm npm artifacts v$VERSION"
 
 rm -rf "$PKG_DIR/default" "$PKG_DIR/simd" "$PKG_DIR/threads"
 mkdir -p "$PKG_DIR/default" "$PKG_DIR/simd" "$PKG_DIR/threads"
@@ -42,15 +43,20 @@ build_variant() {
     unset CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS
   fi
 
+  local status=0
   export WASM_BINDGEN_FLAGS="--keep-debug --generate-sourcemap $wasm_extra_flags"
-  pushd "$CRATE_DIR" >/dev/null
-    if [[ -n "$cargo_features" ]]; then
-      wasm-pack build --release --target web --out-dir "$tmp" --out-name contour -- --features "$cargo_features"
-    else
-      wasm-pack build --release --target web --out-dir "$tmp" --out-name contour
-    fi
-  popd >/dev/null
+  if [[ -n "$cargo_features" ]]; then
+    (cd "$CRATE_DIR" && wasm-pack build --release --target web --out-dir "$tmp" --out-name contour -- --features "$cargo_features") || status=$?
+  else
+    (cd "$CRATE_DIR" && wasm-pack build --release --target web --out-dir "$tmp" --out-name contour) || status=$?
+  fi
   unset WASM_BINDGEN_FLAGS
+  unset RUSTFLAGS
+  unset CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS
+  if [[ "$status" -ne 0 ]]; then
+    rm -rf "$tmp"
+    return "$status"
+  fi
 
   mkdir -p "$dest"
   local wasm_suffix=""
@@ -60,7 +66,7 @@ build_variant() {
   local wasm_name="contour_bg_v${VERSION}${wasm_suffix}.wasm"
 
   mv "$tmp/contour.js" "$dest/contour.js"
-  mv "$tmp/contour.d.ts" "$dest/contour.d.ts"
+  cp "$TYPES_SOURCE" "$dest/contour.d.ts"
   mv "$tmp/contour_bg.wasm" "$dest/${wasm_name}"
   if [[ -f "$tmp/contour_bg.wasm.map" ]]; then
     mv "$tmp/contour_bg.wasm.map" "$dest/${wasm_name}.map"
@@ -82,12 +88,19 @@ build_variant() {
 
 build_variant "default" "" "" ""
 build_variant "simd" "simd" "-C target-feature=+simd128" ""
-build_variant "threads" "threads" "-C target-feature=+atomics,+bulk-memory,+mutable-globals" "--enable-threading"
+if ! build_variant "threads" "threads" "-C target-feature=+atomics,+bulk-memory,+mutable-globals" "--enable-threading"; then
+  echo "Warning: threads variant failed to build; falling back to default runtime for ./threads export." >&2
+  cp "$TYPES_SOURCE" "$PKG_DIR/threads/contour.d.ts"
+  cat <<'EOTHREADSFALLBACK' > "$PKG_DIR/threads/contour.js"
+export * from "../default/contour.js";
+export { default } from "../default/contour.js";
+EOTHREADSFALLBACK
+fi
 
-node <<'NODE' "$NPM_DIR/package.json" "$VERSION"
+node - "$NPM_DIR/package.json" "$VERSION" <<'NODE'
 const fs = require('fs');
-const pkgPath = process.argv[1];
-const version = process.argv[2];
+const pkgPath = process.argv[2];
+const version = process.argv[3];
 const data = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 data.version = version;
 fs.writeFileSync(pkgPath, JSON.stringify(data, null, 2) + '\n');

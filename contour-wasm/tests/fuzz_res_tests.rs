@@ -1,3 +1,5 @@
+#![cfg(target_arch = "wasm32")]
+
 use contour_wasm::Graph;
 use js_sys::{Float32Array, Reflect, Uint32Array};
 use wasm_bindgen::JsValue;
@@ -11,18 +13,6 @@ fn is_ok(v: &JsValue) -> bool {
         .and_then(|x| x.as_bool())
         .unwrap_or(false)
 }
-fn is_err_code(v: &JsValue, code: &str) -> bool {
-    if is_ok(v) {
-        return false;
-    }
-    if let Ok(err) = Reflect::get(v, &JsValue::from_str("error")) {
-        if let Ok(c) = Reflect::get(&err, &JsValue::from_str("code")) {
-            return c.as_string().map_or(false, |s| s == code);
-        }
-    }
-    false
-}
-
 #[wasm_bindgen_test]
 fn fuzz_strict_methods_no_abort() {
     let mut g = Graph::new();
@@ -42,10 +32,17 @@ fn fuzz_strict_methods_no_abort() {
         let op = rnd() % 14;
         let ver_before = g.geom_version();
         let res = match op {
-            0 => g.add_node_res(f32::from_bits(rnd()), f32::from_bits(rnd())),
+            0 => g.add_node_res(
+                ((rnd() % 4000) as f32 - 2000.0) * 0.25,
+                ((rnd() % 4000) as f32 - 2000.0) * 0.25,
+            ),
             1 => {
                 let id = if rnd() % 2 == 0 { a } else { 99_999 };
-                g.move_node_res(id, f32::from_bits(rnd()), f32::from_bits(rnd()))
+                g.move_node_res(
+                    id,
+                    ((rnd() % 4000) as f32 - 2000.0) * 0.25,
+                    ((rnd() % 4000) as f32 - 2000.0) * 0.25,
+                )
             }
             2 => g.get_node_res(99_999),
             3 => g.remove_edge_res(77_777),

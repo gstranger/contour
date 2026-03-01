@@ -1,11 +1,11 @@
 {
-  "name": "contour-smoke",
+  "name": "vecnet-wasm-smoke",
   "type": "module",
   "private": true,
   "scripts": {
     "test": "node test.mjs"
   },
   "dependencies": {
-    "contour": "file:../../npm"
+    "vecnet-wasm": "file:../../npm"
   }
 }

@@ -2,9 +2,8 @@ use crate::geometry::limits;
 use crate::layers::LayerSystem;
 use crate::{
     model::{
-        Color, Effect, EffectId, EffectStack, FillState, FontStyle, Gradient, GradientId, Group,
-        HandleMode, Layer, LayerId, TextAlign, TextElement, TextId, TextOverflow, TextStyle,
-        TextType, Vec2, VerticalAlign,
+        Color, Effect, EffectId, EffectStack, FillState, Gradient, GradientId, Group, HandleMode,
+        Layer, LayerId, TextElement, Vec2,
     },
     Graph,
 };
@@ -183,11 +182,7 @@ pub fn to_json_impl(g: &Graph) -> Value {
         })
         .collect();
     // Serialize texts
-    let texts: Vec<TextElement> = g
-        .texts
-        .iter()
-        .filter_map(|t| t.clone())
-        .collect();
+    let texts: Vec<TextElement> = g.texts.iter().filter_map(|t| t.clone()).collect();
     // Serialize effects
     let effects: Vec<EffectSer> = g
         .effects
@@ -332,7 +327,8 @@ pub fn from_json_impl(g: &mut Graph, v: Value) -> bool {
     }
     #[derive(Deserialize)]
     struct DocDe {
-        version: Option<u32>,
+        #[serde(rename = "version")]
+        _version: Option<u32>,
         nodes: Vec<NodeDe>,
         edges: Vec<EdgeDe>,
         fills: Option<Vec<FillDe>>,
@@ -555,10 +551,18 @@ pub fn from_json_impl(g: &mut Graph, v: Value) -> bool {
                     enabled: b.enabled,
                 };
                 match b.target_type.as_str() {
-                    "shape" => { g.shape_effects.insert(b.target_id, stack); }
-                    "region" => { g.region_effects.insert(b.target_id, stack); }
-                    "text" => { g.text_effects.insert(b.target_id, stack); }
-                    "group" => { g.group_effects.insert(b.target_id, stack); }
+                    "shape" => {
+                        g.shape_effects.insert(b.target_id, stack);
+                    }
+                    "region" => {
+                        g.region_effects.insert(b.target_id, stack);
+                    }
+                    "text" => {
+                        g.text_effects.insert(b.target_id, stack);
+                    }
+                    "group" => {
+                        g.group_effects.insert(b.target_id, stack);
+                    }
                     _ => {}
                 }
             }
@@ -650,7 +654,8 @@ pub fn from_json_impl_strict(g: &mut Graph, v: Value) -> Result<bool, (&'static 
     }
     #[derive(Deserialize)]
     struct DocDe {
-        version: Option<u32>,
+        #[serde(rename = "version")]
+        _version: Option<u32>,
         nodes: Vec<NodeDe>,
         edges: Vec<EdgeDe>,
         fills: Option<Vec<FillDe>>,
@@ -880,10 +885,18 @@ pub fn from_json_impl_strict(g: &mut Graph, v: Value) -> Result<bool, (&'static 
                 enabled: b.enabled,
             };
             match b.target_type.as_str() {
-                "shape" => { g.shape_effects.insert(b.target_id, stack); }
-                "region" => { g.region_effects.insert(b.target_id, stack); }
-                "text" => { g.text_effects.insert(b.target_id, stack); }
-                "group" => { g.group_effects.insert(b.target_id, stack); }
+                "shape" => {
+                    g.shape_effects.insert(b.target_id, stack);
+                }
+                "region" => {
+                    g.region_effects.insert(b.target_id, stack);
+                }
+                "text" => {
+                    g.text_effects.insert(b.target_id, stack);
+                }
+                "group" => {
+                    g.group_effects.insert(b.target_id, stack);
+                }
                 _ => {}
             }
         }

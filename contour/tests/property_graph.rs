@@ -26,14 +26,8 @@ fn op_strategy() -> impl Strategy<Value = Op> {
         any::<u16>().prop_map(|idx| Op::RemoveNode { idx }),
         (any::<u16>(), any::<u16>()).prop_map(|(a, b)| Op::AddEdge { a, b }),
         any::<u16>().prop_map(|idx| Op::RemoveEdge { idx }),
-        (any::<u16>(), any::<u8>(), any::<i8>(), any::<i8>()).prop_map(
-            |(idx, t_num, tx, ty)| Op::BendEdge {
-                idx,
-                t_num,
-                tx,
-                ty,
-            },
-        ),
+        (any::<u16>(), any::<u8>(), any::<i8>(), any::<i8>())
+            .prop_map(|(idx, t_num, tx, ty)| Op::BendEdge { idx, t_num, tx, ty },),
         (any::<u16>(), (0u8..=2u8)).prop_map(|(idx, mode)| Op::SetHandleMode { idx, mode }),
     ]
 }
@@ -156,12 +150,13 @@ fn assert_invariants(g: &mut Graph) {
     // Faces close (non-degenerate regions)
     let regions = g.get_regions();
     for region in regions {
-        if let Some(area) = region.get("area").and_then(|v| v.as_f64()).map(|v| v as f32) {
+        if let Some(area) = region
+            .get("area")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+        {
             if area.abs() > 0.0 {
-                assert!(
-                    area.abs() >= EPS_FACE_AREA,
-                    "degenerate face area {}", area
-                );
+                assert!(area.abs() >= EPS_FACE_AREA, "degenerate face area {}", area);
             }
         }
     }

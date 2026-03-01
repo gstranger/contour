@@ -54,13 +54,13 @@ fn collinear_overlap(
         (ay, by, cy, dy)
     };
     // Normalize parameters on AB
-    let len_ab = (pa2 - pa1);
+    let len_ab = pa2 - pa1;
     if within_eps(len_ab, eps) {
         // AB is a point: treat as touch if it lies on CD
         let t = 0.0;
         let (x, y) = (ax, ay);
         // Param on CD using least-squares along dominant axis
-        let len_cd = (pc2 - pc1);
+        let len_cd = pc2 - pc1;
         let u = if within_eps(len_cd, eps) {
             0.0
         } else {
@@ -82,7 +82,7 @@ fn collinear_overlap(
         return SegIntersection::None;
     }
     // Map back to u-range linearly along CD
-    let len_cd = (pc2 - pc1);
+    let len_cd = pc2 - pc1;
     let u0 = if within_eps(len_cd, eps) {
         0.0
     } else {

@@ -8,7 +8,7 @@
 
 use crate::algorithms::winding::{point_in_polygon_evenodd, point_in_polygon_nonzero};
 use crate::geometry::cubic::CubicBezier;
-use crate::model::{Edge, EdgeKind, FillRule, Shape, Vec2};
+use crate::model::{EdgeKind, FillRule, Shape, Vec2};
 use crate::Graph;
 use std::collections::{HashMap, HashSet};
 
@@ -197,13 +197,7 @@ impl Graph {
 
             match &edge.kind {
                 EdgeKind::Line => {
-                    segments.push(FlatSegment {
-                        start,
-                        end,
-                        edge_id: eid,
-                        t_start: 0.0,
-                        t_end: 1.0,
-                    });
+                    segments.push(FlatSegment { start, end });
                 }
                 EdgeKind::Cubic { ha, hb, .. } => {
                     let curve = CubicBezier::new(
@@ -227,32 +221,19 @@ impl Graph {
                         segments.push(FlatSegment {
                             start: curve.eval(t0),
                             end: curve.eval(t1),
-                            edge_id: eid,
-                            t_start: t0,
-                            t_end: t1,
                         });
                     }
                 }
                 EdgeKind::Polyline { points } => {
                     let mut prev = start;
-                    let n = points.len() + 1;
-                    for (i, p) in points.iter().enumerate() {
+                    for p in points {
                         segments.push(FlatSegment {
                             start: prev,
                             end: *p,
-                            edge_id: eid,
-                            t_start: i as f32 / n as f32,
-                            t_end: (i + 1) as f32 / n as f32,
                         });
                         prev = *p;
                     }
-                    segments.push(FlatSegment {
-                        start: prev,
-                        end,
-                        edge_id: eid,
-                        t_start: (n - 1) as f32 / n as f32,
-                        t_end: 1.0,
-                    });
+                    segments.push(FlatSegment { start: prev, end });
                 }
             }
         }
@@ -270,8 +251,14 @@ impl Graph {
         op: BoolOp,
     ) -> Result<BooleanResult, BoolError> {
         // Check containment by testing a point from each shape
-        let point_a = polygon_a.first().copied().unwrap_or(Vec2 { x: 0.0, y: 0.0 });
-        let point_b = polygon_b.first().copied().unwrap_or(Vec2 { x: 0.0, y: 0.0 });
+        let point_a = polygon_a
+            .first()
+            .copied()
+            .unwrap_or(Vec2 { x: 0.0, y: 0.0 });
+        let point_b = polygon_b
+            .first()
+            .copied()
+            .unwrap_or(Vec2 { x: 0.0, y: 0.0 });
 
         let a_in_b = point_in_polygon(&shape_b.fill_rule, point_a.x, point_a.y, polygon_b);
         let b_in_a = point_in_polygon(&shape_a.fill_rule, point_b.x, point_b.y, polygon_a);
@@ -470,9 +457,6 @@ impl Graph {
 struct FlatSegment {
     start: Vec2,
     end: Vec2,
-    edge_id: u32,
-    t_start: f32,
-    t_end: f32,
 }
 
 /// An intersection between two segments.
@@ -481,8 +465,6 @@ struct Intersection {
     point: Vec2,
     seg_a_id: u32,
     seg_b_id: u32,
-    t_a: f32,
-    t_b: f32,
 }
 
 /// Find intersections between two sets of segments.
@@ -497,8 +479,6 @@ fn find_segment_intersections(segs_a: &[FlatSegment], segs_b: &[FlatSegment]) ->
                         point,
                         seg_a_id: i as u32,
                         seg_b_id: j as u32,
-                        t_a: sa.t_start + t * (sa.t_end - sa.t_start),
-                        t_b: sb.t_start + u * (sb.t_end - sb.t_start),
                     });
                 }
             }
@@ -558,16 +538,10 @@ mod tests {
         let a = FlatSegment {
             start: vec2(0.0, 0.0),
             end: vec2(10.0, 10.0),
-            edge_id: 0,
-            t_start: 0.0,
-            t_end: 1.0,
         };
         let b = FlatSegment {
             start: vec2(0.0, 10.0),
             end: vec2(10.0, 0.0),
-            edge_id: 1,
-            t_start: 0.0,
-            t_end: 1.0,
         };
 
         let result = segment_intersection(&a, &b);
@@ -585,16 +559,10 @@ mod tests {
         let a = FlatSegment {
             start: vec2(0.0, 0.0),
             end: vec2(5.0, 0.0),
-            edge_id: 0,
-            t_start: 0.0,
-            t_end: 1.0,
         };
         let b = FlatSegment {
             start: vec2(0.0, 5.0),
             end: vec2(5.0, 5.0),
-            edge_id: 1,
-            t_start: 0.0,
-            t_end: 1.0,
         };
 
         let result = segment_intersection(&a, &b);

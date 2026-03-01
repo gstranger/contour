@@ -361,7 +361,6 @@ pub fn pick_impl(g: &Graph, x: f32, y: f32, tol: f32) -> Option<crate::Pick> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::Graph;
     #[test]
     fn bench_pick_grid() {

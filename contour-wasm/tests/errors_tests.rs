@@ -1,3 +1,5 @@
+#![cfg(target_arch = "wasm32")]
+
 use contour_wasm::Graph;
 use js_sys::{Float32Array, Reflect, Uint32Array};
 use wasm_bindgen::JsValue;
@@ -86,7 +88,7 @@ fn transforms_and_style_strict_errors() {
 fn translate_res_validation() {
     let mut g = Graph::new();
     let a = g.add_node(0.0, 0.0);
-    let b = g.add_node(10.0, 0.0);
+    let _b = g.add_node(10.0, 0.0);
     let ids = Uint32Array::from(&[a, 999_999][..]);
     let r = g.translate_nodes_res(&ids, 1.0, 2.0);
     assert!(is_err(&r, "invalid_id"));

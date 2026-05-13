@@ -88,14 +88,73 @@ build_variant() {
 
 build_variant "default" "" "" ""
 build_variant "simd" "simd" "-C target-feature=+simd128" ""
-if ! build_variant "threads" "threads" "-C target-feature=+atomics,+bulk-memory,+mutable-globals" "--enable-threading"; then
-  echo "Warning: threads variant failed to build; falling back to default runtime for ./threads export." >&2
-  cp "$TYPES_SOURCE" "$PKG_DIR/threads/contour.d.ts"
-  cat <<'EOTHREADSFALLBACK' > "$PKG_DIR/threads/contour.js"
-export * from "../default/contour.js";
-export { default } from "../default/contour.js";
-EOTHREADSFALLBACK
-fi
+
+# Threads variant requires nightly + rust-src + -Z build-std to recompile std
+# with atomics/bulk-memory enabled. There is no stable-Rust path. Fail loudly
+# if prereqs are missing or the build fails: a fallback to the default bundle
+# would silently ship a non-threaded artifact under the ./threads export.
+build_threads_variant() {
+  local variant="threads"
+  local dest="$PKG_DIR/$variant"
+
+  if ! rustup toolchain list 2>/dev/null | grep -q '^nightly'; then
+    echo "ERROR: threads variant requires the nightly toolchain." >&2
+    echo "  Install with: rustup toolchain install nightly" >&2
+    return 1
+  fi
+  if ! rustup component list --toolchain nightly --installed 2>/dev/null | grep -q '^rust-src'; then
+    echo "ERROR: threads variant requires rust-src on nightly (for -Z build-std)." >&2
+    echo "  Install with: rustup component add rust-src --toolchain nightly" >&2
+    return 1
+  fi
+
+  local tmp
+  tmp=$(mktemp -d)
+
+  export RUSTUP_TOOLCHAIN=nightly
+  export RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals"
+  export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="$RUSTFLAGS"
+  export WASM_BINDGEN_FLAGS="--keep-debug --generate-sourcemap --enable-threading"
+
+  local status=0
+  (cd "$CRATE_DIR" && wasm-pack build --release --target web --out-dir "$tmp" --out-name contour -- --features threads -Z build-std=panic_abort,std) || status=$?
+
+  unset RUSTUP_TOOLCHAIN
+  unset RUSTFLAGS
+  unset CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS
+  unset WASM_BINDGEN_FLAGS
+
+  if [[ "$status" -ne 0 ]]; then
+    rm -rf "$tmp"
+    echo "ERROR: threads variant build failed (see logs above)." >&2
+    return "$status"
+  fi
+
+  mkdir -p "$dest"
+  local wasm_name="contour_bg_v${VERSION}_threads.wasm"
+
+  mv "$tmp/contour.js" "$dest/contour.js"
+  cp "$TYPES_SOURCE" "$dest/contour.d.ts"
+  mv "$tmp/contour_bg.wasm" "$dest/${wasm_name}"
+  if [[ -f "$tmp/contour_bg.wasm.map" ]]; then
+    mv "$tmp/contour_bg.wasm.map" "$dest/${wasm_name}.map"
+  fi
+  if [[ -f "$tmp/contour_bg.wasm.d.ts" ]]; then
+    mv "$tmp/contour_bg.wasm.d.ts" "$dest/contour_bg_v${VERSION}_threads.wasm.d.ts"
+  fi
+  if [[ -d "$tmp/snippets" ]]; then
+    rm -rf "$dest/snippets"
+    mv "$tmp/snippets" "$dest/snippets"
+  fi
+  if [[ -f "$tmp/package.json" ]]; then
+    mv "$tmp/package.json" "$dest/wasm-pack-package.json"
+  fi
+
+  update_js_import "$dest/contour.js" "$wasm_name"
+  rm -rf "$tmp"
+}
+
+build_threads_variant
 
 node - "$NPM_DIR/package.json" "$VERSION" <<'NODE'
 const fs = require('fs');

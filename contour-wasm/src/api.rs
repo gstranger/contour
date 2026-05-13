@@ -21,6 +21,34 @@ impl Graph {
         self.rs_geom_version()
     }
 
+    /// Diff of changes since `since`. Returns an object matching the
+    /// `DirtyDiff` shape (see types.d.ts). If `since` is older than the
+    /// internal dirty window or a topology-wide invalidation occurred,
+    /// `full` is true and the caller should rebuild.
+    ///
+    /// Consumers doing UI sync should call this BEFORE any call that
+    /// triggers a region pass within a frame (notably `get_regions`),
+    /// since region recompute clears the window.
+    pub fn get_dirty(&self, since: u64) -> JsValue {
+        let diff = self.inner.get_dirty(since);
+        serde_wasm_bindgen::to_value(&diff).unwrap_or(JsValue::NULL)
+    }
+
+    pub fn get_dirty_res(&self, since: u64) -> JsValue {
+        error::ok(self.get_dirty(since))
+    }
+
+    /// Resets the dirty window: subsequent `get_dirty` queries are relative
+    /// to the current `geom_version`.
+    pub fn dirty_reset(&mut self) {
+        self.inner.dirty_reset();
+    }
+
+    pub fn dirty_reset_res(&mut self) -> JsValue {
+        self.inner.dirty_reset();
+        error::ok(JsValue::TRUE)
+    }
+
     // Nodes/Edges basic
     pub fn add_node(&mut self, x: f32, y: f32) -> u32 {
         self.inner.add_node(x, y)
@@ -52,14 +80,14 @@ impl Graph {
     }
     pub fn get_node(&self, id: u32) -> JsValue {
         if let Some((x, y)) = self.inner.get_node(id) {
-            serde_wasm_bindgen::to_value(&vec![x, y]).unwrap()
+            serde_wasm_bindgen::to_value(&vec![x, y]).unwrap_or(JsValue::NULL)
         } else {
             JsValue::NULL
         }
     }
     pub fn get_node_res(&self, id: u32) -> JsValue {
         if let Some((x, y)) = self.inner.get_node(id) {
-            error::ok(serde_wasm_bindgen::to_value(&vec![x, y]).unwrap())
+            error::ok(serde_wasm_bindgen::to_value(&vec![x, y]).unwrap_or(JsValue::NULL))
         } else {
             error::invalid_id("node", id)
         }
@@ -194,7 +222,7 @@ impl Graph {
         }
     }
     pub fn to_json(&self) -> JsValue {
-        serde_wasm_bindgen::to_value(&self.inner.to_json_value()).unwrap()
+        serde_wasm_bindgen::to_value(&self.inner.to_json_value()).unwrap_or(JsValue::NULL)
     }
     pub fn from_json(&mut self, v: JsValue) -> bool {
         match serde_wasm_bindgen::from_value::<serde_json::Value>(v) {
@@ -229,7 +257,7 @@ impl Graph {
         self.inner.add_svg_path(d, Some((r, g, b, a, width)))
     }
     pub fn to_svg_paths(&self) -> JsValue {
-        serde_wasm_bindgen::to_value(&self.inner.to_svg_paths()).unwrap()
+        serde_wasm_bindgen::to_value(&self.inner.to_svg_paths()).unwrap_or(JsValue::NULL)
     }
     pub fn add_svg_path_res(&mut self, d: &str) -> JsValue {
         let before = self.inner.geom_version();
@@ -247,7 +275,7 @@ impl Graph {
 
     // Regions + fill
     pub fn get_regions(&mut self) -> JsValue {
-        serde_wasm_bindgen::to_value(&self.inner.get_regions()).unwrap()
+        serde_wasm_bindgen::to_value(&self.inner.get_regions()).unwrap_or(JsValue::NULL)
     }
     pub fn get_regions_res(&mut self) -> JsValue {
         error::ok(self.get_regions())
@@ -323,7 +351,7 @@ impl Graph {
     }
     pub fn get_edge_style(&self, id: u32) -> JsValue {
         if let Some((r, g, b, a, w)) = self.inner.get_edge_style(id) {
-            serde_wasm_bindgen::to_value(&vec![r as f32, g as f32, b as f32, a as f32, w]).unwrap()
+            serde_wasm_bindgen::to_value(&vec![r as f32, g as f32, b as f32, a as f32, w]).unwrap_or(JsValue::NULL)
         } else {
             JsValue::NULL
         }
@@ -362,7 +390,7 @@ impl Graph {
     }
     pub fn get_handles(&self, id: u32) -> JsValue {
         if let Some(h) = self.inner.get_handles(id) {
-            serde_wasm_bindgen::to_value(&h).unwrap()
+            serde_wasm_bindgen::to_value(&h).unwrap_or(JsValue::NULL)
         } else {
             JsValue::NULL
         }
@@ -372,7 +400,7 @@ impl Graph {
             return error::invalid_id("edge", id);
         }
         match self.inner.get_handles(id) {
-            Some(h) => error::ok(serde_wasm_bindgen::to_value(&h).unwrap()),
+            Some(h) => error::ok(serde_wasm_bindgen::to_value(&h).unwrap_or(JsValue::NULL)),
             None => error::not_cubic(id),
         }
     }
@@ -772,7 +800,7 @@ impl Graph {
             "edges": result.edges,
             "shape": result.shape
         }))
-        .unwrap()
+        .unwrap_or(JsValue::NULL)
     }
 
     pub fn add_rectangle_res(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32) -> JsValue {
@@ -797,7 +825,7 @@ impl Graph {
                 "edges": result.edges,
                 "shape": result.shape
             }))
-            .unwrap(),
+            .unwrap_or(JsValue::NULL),
         )
     }
 
@@ -810,7 +838,7 @@ impl Graph {
             "edges": result.edges,
             "shape": result.shape
         }))
-        .unwrap()
+        .unwrap_or(JsValue::NULL)
     }
 
     pub fn add_ellipse_res(&mut self, cx: f32, cy: f32, rx: f32, ry: f32) -> JsValue {
@@ -832,7 +860,7 @@ impl Graph {
                 "edges": result.edges,
                 "shape": result.shape
             }))
-            .unwrap(),
+            .unwrap_or(JsValue::NULL),
         )
     }
 
@@ -845,7 +873,7 @@ impl Graph {
             "edges": result.edges,
             "shape": result.shape
         }))
-        .unwrap()
+        .unwrap_or(JsValue::NULL)
     }
 
     pub fn add_polygon_res(
@@ -874,7 +902,7 @@ impl Graph {
                 "edges": result.edges,
                 "shape": result.shape
             }))
-            .unwrap(),
+            .unwrap_or(JsValue::NULL),
         )
     }
 
@@ -897,7 +925,7 @@ impl Graph {
             "edges": result.edges,
             "shape": result.shape
         }))
-        .unwrap()
+        .unwrap_or(JsValue::NULL)
     }
 
     pub fn add_star_res(
@@ -938,7 +966,7 @@ impl Graph {
                 "edges": result.edges,
                 "shape": result.shape
             }))
-            .unwrap(),
+            .unwrap_or(JsValue::NULL),
         )
     }
 
@@ -983,7 +1011,7 @@ impl Graph {
                 })
             })
             .collect();
-        serde_wasm_bindgen::to_value(&arr).unwrap()
+        serde_wasm_bindgen::to_value(&arr).unwrap_or(JsValue::NULL)
     }
 
     /// Rename a layer
@@ -1083,7 +1111,7 @@ impl Graph {
                 })
             })
             .collect();
-        serde_wasm_bindgen::to_value(&arr).unwrap()
+        serde_wasm_bindgen::to_value(&arr).unwrap_or(JsValue::NULL)
     }
 
     /// Rename a group
@@ -1556,7 +1584,7 @@ impl Graph {
                 "nodes": result.nodes,
                 "edges": result.edges
             }))
-            .unwrap(),
+            .unwrap_or(JsValue::NULL),
             Err(_) => JsValue::NULL,
         }
     }
@@ -1582,7 +1610,7 @@ impl Graph {
                     "nodes": result.nodes,
                     "edges": result.edges
                 }))
-                .unwrap(),
+                .unwrap_or(JsValue::NULL),
             ),
             Err(e) => {
                 let msg = format!("{:?}", e);

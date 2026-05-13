@@ -185,16 +185,14 @@ pub fn pick_impl(g: &Graph, x: f32, y: f32, tol: f32) -> Option<crate::Pick> {
     // Use spatial index with lazy rebuild keyed by geom_ver
     let cell = choose_cell_size(g);
     let mut idx_guard = g.pick_index.borrow_mut();
-    let use_idx = if let Some((ver, _)) = idx_guard.as_ref() {
-        *ver == g.geom_version()
-    } else {
-        false
-    };
+    let use_idx = matches!(idx_guard.as_ref(), Some((ver, _)) if *ver == g.geom_version());
     if !use_idx {
         let idx = build_pick_index(g, cell);
         *idx_guard = Some((g.geom_version(), idx));
     }
-    let (_, idx) = idx_guard.as_ref().unwrap();
+    let Some((_, idx)) = idx_guard.as_ref() else {
+        return None;
+    };
 
     let tol2 = tol * tol;
     // Nodes first

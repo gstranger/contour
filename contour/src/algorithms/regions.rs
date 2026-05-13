@@ -73,7 +73,7 @@ fn region_key_from_edges(seq: &[u32]) -> u32 {
                 best = Some(rot);
             }
         }
-        best.unwrap()
+        best.unwrap_or_default()
     }
     let fwd = min_rot_u32(seq);
     let bwd = min_rot_u32(&rev);
@@ -388,7 +388,7 @@ fn regions_from_plan(plan: &Planarized) -> Vec<Region> {
     for lst in &mut adj {
         lst.sort_by(|a, b| {
             a.1.partial_cmp(&b.1)
-                .unwrap()
+                .unwrap_or(std::cmp::Ordering::Equal)
                 .then(a.0.cmp(&b.0))
                 .then(a.2.cmp(&b.2))
         });
@@ -701,7 +701,9 @@ pub(crate) fn compute_regions_incremental(g: &mut Graph) -> Vec<Region> {
     }
 
     let mut cache_guard = g.region_cache.borrow_mut();
-    let cache = cache_guard.as_mut().unwrap();
+    let Some(cache) = cache_guard.as_mut() else {
+        return Vec::new();
+    };
     let mut removal_edges = candidate_set;
     removal_edges.extend(removed_edges.iter().copied());
     let mut new_face_keys: HashSet<u32> = HashSet::new();
@@ -725,8 +727,10 @@ pub(crate) fn compute_regions_incremental(g: &mut Graph) -> Vec<Region> {
 
     let result = {
         let cache = g.region_cache.borrow();
-        let cache = cache.as_ref().unwrap();
-        cache_faces_to_regions(&cache.faces)
+        match cache.as_ref() {
+            Some(c) => cache_faces_to_regions(&c.faces),
+            None => Vec::new(),
+        }
     };
     #[cfg(feature = "region_prof")]
     eprintln!(
@@ -767,7 +771,12 @@ pub fn get_regions_with_fill(g: &mut Graph) -> Vec<serde_json::Value> {
                 .1
                 .cmp(&new_prev[j].1)
                 .then(new_prev[i].2.cmp(&new_prev[j].2))
-                .then(new_prev[i].3.partial_cmp(&new_prev[j].3).unwrap())
+                .then(
+                    new_prev[i]
+                        .3
+                        .partial_cmp(&new_prev[j].3)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
                 .then(new_prev[i].0.cmp(&new_prev[j].0))
         });
         for idx in order {
@@ -834,7 +843,7 @@ pub fn get_regions_with_fill(g: &mut Graph) -> Vec<serde_json::Value> {
                 color,
                 points: pts,
             })
-            .unwrap()
+            .unwrap_or(serde_json::Value::Null)
         })
         .collect()
 }

@@ -32,6 +32,7 @@ jobs:
             -A clippy::manual_flatten \
             -A clippy::collapsible_if \
             -A clippy::collapsible_else_if \
+            -A clippy::collapsible_match \
             -A clippy::needless_range_loop \
             -A clippy::while_let_loop \
             -A clippy::unnecessary_map_or \

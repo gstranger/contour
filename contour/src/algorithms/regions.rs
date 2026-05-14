@@ -752,7 +752,7 @@ pub fn get_regions_with_fill(g: &mut Graph) -> Vec<serde_json::Value> {
     }
 
     let mut regions = g.compute_regions_incremental();
-    regions.sort_by(|a, b| a.key.cmp(&b.key));
+    regions.sort_by_key(|r| r.key);
 
     if g.last_geom_ver != g.geom_ver {
         let mut new_prev: Vec<(u32, i32, i32, f32)> = Vec::with_capacity(regions.len());

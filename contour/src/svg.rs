@@ -126,7 +126,10 @@ pub fn to_svg_document_impl(g: &Graph) -> String {
         update_bbox(text.position.x, text.position.y);
         // Estimate text extent for bbox (rough approximation)
         let est_width = text.content.len() as f32 * text.style.font_size * 0.6;
-        update_bbox(text.position.x + est_width, text.position.y + text.style.font_size);
+        update_bbox(
+            text.position.x + est_width,
+            text.position.y + text.style.font_size,
+        );
 
         // Build text-anchor from align
         let text_anchor = match text.align {
@@ -227,7 +230,10 @@ pub fn to_svg_document_impl(g: &Graph) -> String {
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="{} {} {} {}">
 {}
 </svg>"#,
-        vb_x, vb_y, vb_w, vb_h,
+        vb_x,
+        vb_y,
+        vb_w,
+        vb_h,
         elements.join("\n")
     )
 }

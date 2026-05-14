@@ -1,6 +1,10 @@
 // Verify that the built threads .wasm is actually a threaded build (i.e., it
-// imports a *shared* memory). Fails loudly if release_npm.sh ever silently
+// declares shared memory). Fails loudly if release_npm.sh ever silently
 // regresses to a non-threaded artifact under the ./threads export.
+//
+// Some toolchains (wasm-bindgen + wasm-pack with --target web) emit shared
+// memory as an *internal* memory definition rather than an import; both forms
+// are valid threaded wasms, so we accept either by parsing the wasm binary.
 //
 // Usage: node scripts/verify-threads.mjs [path-to.wasm]
 // Default path: npm/pkg/threads/contour_bg_v<version>_threads.wasm
@@ -22,28 +26,96 @@ if (!wasmPath) {
 }
 
 const buf = readFileSync(wasmPath);
-const mod = new WebAssembly.Module(buf);
-const memImports = WebAssembly.Module.imports(mod).filter((i) => i.kind === "memory");
-if (memImports.length !== 1) {
-  console.error(`verify-threads: expected 1 memory import, got ${memImports.length}`);
-  process.exit(1);
+
+// Walk the wasm binary looking for any memory (imported or internally defined)
+// whose limits flags include the shared bit (0x02). Spec:
+// https://webassembly.github.io/threads/core/binary/types.html#binary-limits
+function readULEB128(buf, off) {
+  let result = 0;
+  let shift = 0;
+  let bytes = 0;
+  while (true) {
+    const b = buf[off + bytes];
+    bytes++;
+    result |= (b & 0x7f) << shift;
+    if ((b & 0x80) === 0) break;
+    shift += 7;
+    if (shift > 35) throw new Error("ULEB128 overflow");
+  }
+  return [result >>> 0, bytes];
 }
 
-// Probe the shared flag by attempting to instantiate against a non-shared memory.
-// A threaded wasm declares `shared = 1` and the engine refuses the mismatch.
-// We use a deliberately oversized initial so the failure is the shared-state
-// mismatch and not a pages-too-small mismatch.
-const { module: mod_name, name } = memImports[0];
-const nonShared = new WebAssembly.Memory({ initial: 4096, maximum: 16384, shared: false });
-try {
-  new WebAssembly.Instance(mod, { [mod_name]: { [name]: nonShared } });
-  console.error(`verify-threads: FAIL — ${wasmPath} accepted a non-shared memory; this is not a threaded build`);
-  process.exit(1);
-} catch (e) {
-  if (!/shared state/.test(e.message)) {
-    console.error(`verify-threads: FAIL — ${wasmPath} rejected non-shared memory but not for the expected reason`);
-    console.error(`  engine said: ${e.message}`);
-    process.exit(1);
+function skipLimits(buf, off) {
+  const flags = buf[off++];
+  const [, mb] = readULEB128(buf, off);
+  off += mb;
+  if (flags & 0x01) {
+    const [, xb] = readULEB128(buf, off);
+    off += xb;
   }
-  console.log(`verify-threads: OK — ${path.basename(wasmPath)} requires shared memory`);
+  return { flags, off };
 }
+
+function findSharedMemory(buf) {
+  if (buf.length < 8 || buf[0] !== 0x00 || buf[1] !== 0x61 || buf[2] !== 0x73 || buf[3] !== 0x6d) {
+    throw new Error("not a wasm binary (bad magic)");
+  }
+  let off = 8;
+  while (off < buf.length) {
+    const id = buf[off++];
+    const [size, sb] = readULEB128(buf, off);
+    off += sb;
+    const sectionEnd = off + size;
+    if (id === 2) {
+      // Imports section
+      let p = off;
+      const [count, cb] = readULEB128(buf, p);
+      p += cb;
+      for (let i = 0; i < count; i++) {
+        const [modLen, ml] = readULEB128(buf, p);
+        p += ml + modLen;
+        const [nameLen, nl] = readULEB128(buf, p);
+        p += nl + nameLen;
+        const kind = buf[p++];
+        if (kind === 0) {
+          const [, x] = readULEB128(buf, p);
+          p += x;
+        } else if (kind === 1) {
+          p += 1; // reftype byte
+          const r = skipLimits(buf, p);
+          p = r.off;
+        } else if (kind === 2) {
+          const r = skipLimits(buf, p);
+          p = r.off;
+          if (r.flags & 0x02) return { kind: "imported", flags: r.flags };
+        } else if (kind === 3) {
+          p += 2; // valtype + mut
+        } else if (kind === 4) {
+          // tag: attribute byte + typeidx
+          p += 1;
+          const [, x] = readULEB128(buf, p);
+          p += x;
+        }
+      }
+    } else if (id === 5) {
+      // Memory section
+      let p = off;
+      const [count, cb] = readULEB128(buf, p);
+      p += cb;
+      for (let i = 0; i < count; i++) {
+        const r = skipLimits(buf, p);
+        p = r.off;
+        if (r.flags & 0x02) return { kind: "internal", flags: r.flags };
+      }
+    }
+    off = sectionEnd;
+  }
+  return null;
+}
+
+const found = findSharedMemory(buf);
+if (!found) {
+  console.error(`verify-threads: FAIL — ${wasmPath} declares no shared memory; not a threaded build`);
+  process.exit(1);
+}
+console.log(`verify-threads: OK — ${path.basename(wasmPath)} declares ${found.kind} shared memory (flags=0x${found.flags.toString(16)})`);

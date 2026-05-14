@@ -6,18 +6,61 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
 enum Op {
-    AddNode { x: i16, y: i16 },
-    MoveNode { idx: u16, dx: i8, dy: i8 },
-    RemoveNode { idx: u16 },
-    AddEdge { a: u16, b: u16 },
-    RemoveEdge { idx: u16 },
-    BendEdge { idx: u16, t_num: u8, tx: i8, ty: i8 },
-    SetHandleMode { idx: u16, mode: u8 },
-    SetEdgeCubic { idx: u16, p1x: i8, p1y: i8, p2x: i8, p2y: i8 },
-    SetHandlePos { idx: u16, end: u8, x: i8, y: i8 },
-    AddSvgPath { kind: u8 },
-    AddFreehand { seed: u8, n: u8, close: bool },
-    Pick { x: i16, y: i16, tol_num: u8 },
+    AddNode {
+        x: i16,
+        y: i16,
+    },
+    MoveNode {
+        idx: u16,
+        dx: i8,
+        dy: i8,
+    },
+    RemoveNode {
+        idx: u16,
+    },
+    AddEdge {
+        a: u16,
+        b: u16,
+    },
+    RemoveEdge {
+        idx: u16,
+    },
+    BendEdge {
+        idx: u16,
+        t_num: u8,
+        tx: i8,
+        ty: i8,
+    },
+    SetHandleMode {
+        idx: u16,
+        mode: u8,
+    },
+    SetEdgeCubic {
+        idx: u16,
+        p1x: i8,
+        p1y: i8,
+        p2x: i8,
+        p2y: i8,
+    },
+    SetHandlePos {
+        idx: u16,
+        end: u8,
+        x: i8,
+        y: i8,
+    },
+    AddSvgPath {
+        kind: u8,
+    },
+    AddFreehand {
+        seed: u8,
+        n: u8,
+        close: bool,
+    },
+    Pick {
+        x: i16,
+        y: i16,
+        tol_num: u8,
+    },
 }
 
 fn op_strategy() -> impl Strategy<Value = Op> {
@@ -34,22 +77,33 @@ fn op_strategy() -> impl Strategy<Value = Op> {
         (any::<u16>(), any::<u8>(), any::<i8>(), any::<i8>())
             .prop_map(|(idx, t_num, tx, ty)| Op::BendEdge { idx, t_num, tx, ty },),
         (any::<u16>(), (0u8..=2u8)).prop_map(|(idx, mode)| Op::SetHandleMode { idx, mode }),
-        (any::<u16>(), any::<i8>(), any::<i8>(), any::<i8>(), any::<i8>()).prop_map(
-            |(idx, p1x, p1y, p2x, p2y)| Op::SetEdgeCubic {
+        (
+            any::<u16>(),
+            any::<i8>(),
+            any::<i8>(),
+            any::<i8>(),
+            any::<i8>()
+        )
+            .prop_map(|(idx, p1x, p1y, p2x, p2y)| Op::SetEdgeCubic {
                 idx,
                 p1x,
                 p1y,
                 p2x,
                 p2y,
-            }
-        ),
+            }),
         (any::<u16>(), (0u8..=1u8), any::<i8>(), any::<i8>())
             .prop_map(|(idx, end, x, y)| Op::SetHandlePos { idx, end, x, y }),
         (0u8..=3u8).prop_map(|kind| Op::AddSvgPath { kind }),
-        (any::<u8>(), any::<u8>(), any::<bool>())
-            .prop_map(|(seed, n, close)| Op::AddFreehand { seed, n, close }),
-        (any::<i16>(), any::<i16>(), any::<u8>())
-            .prop_map(|(x, y, tol_num)| Op::Pick { x, y, tol_num }),
+        (any::<u8>(), any::<u8>(), any::<bool>()).prop_map(|(seed, n, close)| Op::AddFreehand {
+            seed,
+            n,
+            close
+        }),
+        (any::<i16>(), any::<i16>(), any::<u8>()).prop_map(|(x, y, tol_num)| Op::Pick {
+            x,
+            y,
+            tol_num
+        }),
     ]
 }
 
@@ -146,7 +200,13 @@ fn apply_op(g: &mut Graph, state: &ModelState, op: Op) {
             let eid = state.edges[(idx as usize) % state.edges.len()];
             let _ = g.set_handle_mode(eid, mode);
         }
-        Op::SetEdgeCubic { idx, p1x, p1y, p2x, p2y } => {
+        Op::SetEdgeCubic {
+            idx,
+            p1x,
+            p1y,
+            p2x,
+            p2y,
+        } => {
             if state.edges.is_empty() {
                 return;
             }
@@ -221,10 +281,7 @@ fn assert_invariants(g: &mut Graph, prev_ver: u64) {
     );
 
     // geom_version is monotonic non-decreasing
-    prop_assert_local(
-        g.geom_version() >= prev_ver,
-        "geom_version went backwards",
-    );
+    prop_assert_local(g.geom_version() >= prev_ver, "geom_version went backwards");
 
     // No dangling references; no self-loops
     let node_set: HashSet<u32> = node_ids.iter().copied().collect();

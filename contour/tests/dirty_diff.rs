@@ -36,7 +36,10 @@ fn diff_collects_changes_since_a_covered_version() {
     assert_eq!(diff.nodes_moved, vec![a]);
     assert_eq!(diff.edges_added.len(), 2);
     assert!(diff.edges_added.contains(&e));
-    assert!(diff.bbox.is_some(), "bbox should be populated after mutations");
+    assert!(
+        diff.bbox.is_some(),
+        "bbox should be populated after mutations"
+    );
     let _ = before;
 }
 

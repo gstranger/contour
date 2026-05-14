@@ -351,7 +351,8 @@ impl Graph {
     }
     pub fn get_edge_style(&self, id: u32) -> JsValue {
         if let Some((r, g, b, a, w)) = self.inner.get_edge_style(id) {
-            serde_wasm_bindgen::to_value(&vec![r as f32, g as f32, b as f32, a as f32, w]).unwrap_or(JsValue::NULL)
+            serde_wasm_bindgen::to_value(&vec![r as f32, g as f32, b as f32, a as f32, w])
+                .unwrap_or(JsValue::NULL)
         } else {
             JsValue::NULL
         }

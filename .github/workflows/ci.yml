@@ -116,6 +116,21 @@ jobs:
         run: |
           cd contour-wasm
           wasm-pack build --release --target web --out-dir ../pkg
+      - name: Optimize with wasm-opt (preserved features)
+        run: |
+          # Cargo.toml disables wasm-pack's wasm-opt step; run it manually.
+          set -e
+          wasm_opt=$(find "$HOME/.cache/.wasm-pack" -type f -name wasm-opt 2>/dev/null | head -n1)
+          if [ -z "$wasm_opt" ]; then
+            wasm_opt=$(command -v wasm-opt || true)
+          fi
+          if [ -z "$wasm_opt" ]; then
+            echo "wasm-opt not found" >&2
+            exit 1
+          fi
+          "$wasm_opt" pkg/contour_bg.wasm -o pkg/contour_bg.opt.wasm -O \
+            --enable-bulk-memory --enable-mutable-globals --enable-sign-ext
+          mv pkg/contour_bg.opt.wasm pkg/contour_bg.wasm
       - name: Check size budget
         run: ./scripts/size-check.sh
 

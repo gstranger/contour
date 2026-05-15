@@ -18,6 +18,40 @@ echo "Building vecnet-wasm npm artifacts v$VERSION"
 rm -rf "$PKG_DIR/default" "$PKG_DIR/simd" "$PKG_DIR/threads"
 mkdir -p "$PKG_DIR/default" "$PKG_DIR/simd" "$PKG_DIR/threads"
 
+# Locate wasm-opt. wasm-pack downloads it on first build; reuse that copy when
+# present so we don't drag a second binaryen install into the script.
+find_wasm_opt() {
+  if command -v wasm-opt >/dev/null 2>&1; then
+    command -v wasm-opt
+    return 0
+  fi
+  local cached
+  cached=$(find "$HOME/.cache/.wasm-pack" "$HOME/Library/Caches/.wasm-pack" \
+    -type f -name wasm-opt 2>/dev/null | head -n1)
+  if [[ -n "$cached" ]]; then
+    echo "$cached"
+    return 0
+  fi
+  return 1
+}
+
+# Run wasm-opt with explicit feature flags so it preserves what each variant
+# was compiled with. wasm-pack's built-in step is disabled in Cargo.toml
+# metadata to give us this control — see the comment there.
+optimize_wasm() {
+  local wasm_path="$1"
+  shift
+  local wasm_opt
+  if ! wasm_opt=$(find_wasm_opt); then
+    echo "ERROR: wasm-opt not found (looked in PATH and wasm-pack cache)" >&2
+    return 1
+  fi
+  local tmp_out="${wasm_path}.opt"
+  "$wasm_opt" "$wasm_path" -o "$tmp_out" -O \
+    --enable-bulk-memory --enable-mutable-globals --enable-sign-ext "$@"
+  mv "$tmp_out" "$wasm_path"
+}
+
 update_js_import() {
   local file="$1"
   local wasm_name="$2"
@@ -68,6 +102,11 @@ build_variant() {
   mv "$tmp/contour.js" "$dest/contour.js"
   cp "$TYPES_SOURCE" "$dest/contour.d.ts"
   mv "$tmp/contour_bg.wasm" "$dest/${wasm_name}"
+  if [[ "$variant" == "simd" ]]; then
+    optimize_wasm "$dest/${wasm_name}" --enable-simd
+  else
+    optimize_wasm "$dest/${wasm_name}"
+  fi
   if [[ -f "$tmp/contour_bg.wasm.map" ]]; then
     mv "$tmp/contour_bg.wasm.map" "$dest/${wasm_name}.map"
   fi
@@ -136,6 +175,7 @@ build_threads_variant() {
   mv "$tmp/contour.js" "$dest/contour.js"
   cp "$TYPES_SOURCE" "$dest/contour.d.ts"
   mv "$tmp/contour_bg.wasm" "$dest/${wasm_name}"
+  optimize_wasm "$dest/${wasm_name}" --enable-threads
   if [[ -f "$tmp/contour_bg.wasm.map" ]]; then
     mv "$tmp/contour_bg.wasm.map" "$dest/${wasm_name}.map"
   fi

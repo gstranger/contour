@@ -25,16 +25,9 @@ threads = ["contour/threads"]
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 
-# wasm-opt strips features it doesn't recognize. Without --enable-threads it
-# silently drops shared memory + atomics from the threads variant, producing a
-# non-threaded artifact that bypasses verify-threads.mjs. Enable everything we
-# use across variants so wasm-opt preserves the features compiled into each.
+# Disable wasm-pack's built-in wasm-opt step. release_npm.sh runs wasm-opt
+# explicitly per variant with the right --enable-* flags. Without this, the
+# default wasm-opt invocation silently strips shared memory + atomics from
+# the threads variant.
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = [
-    "-O",
-    "--enable-bulk-memory",
-    "--enable-mutable-globals",
-    "--enable-threads",
-    "--enable-sign-ext",
-    "--enable-simd",
-]
+wasm-opt = false

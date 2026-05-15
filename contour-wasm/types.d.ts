@@ -2,10 +2,33 @@ export type Ok<T> = { ok: true; value: T };
 export type Err = { ok: false; error: { code: string; message: string; data?: any } };
 export type Result<T> = Ok<T> | Err;
 
+/**
+ * Snapshot of changes since a caller-supplied version, returned by `get_dirty`.
+ * If `full` is true the caller should rebuild instead of applying the diff.
+ * Consumers should call `get_dirty` BEFORE any call that triggers a region
+ * pass within a frame, since region recompute clears the window.
+ */
+export interface DirtyDiff {
+  current_ver: number;
+  since_ver: number;
+  full: boolean;
+  nodes_added: number[];
+  nodes_removed: number[];
+  nodes_moved: number[];
+  edges_added: number[];
+  edges_removed: number[];
+  edges_modified: number[];
+  bbox: [number, number, number, number] | null;
+}
+
 // Minimal Graph subset with strict methods (non-exhaustive)
 export declare class Graph {
   constructor();
   geom_version(): number;
+  get_dirty(since: number): DirtyDiff;
+  get_dirty_res(since: number): Result<DirtyDiff>;
+  dirty_reset(): void;
+  dirty_reset_res(): Result<boolean>;
   // Strict variants
   add_node_res(x: number, y: number): Result<number>;
   move_node_res(id: number, x: number, y: number): Result<boolean>;

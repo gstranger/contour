@@ -246,7 +246,7 @@ pub fn to_json_impl(g: &Graph) -> Value {
         effects,
         effect_bindings,
     })
-    .unwrap()
+    .unwrap_or(Value::Null)
 }
 
 pub fn from_json_impl(g: &mut Graph, v: Value) -> bool {

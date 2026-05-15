@@ -24,3 +24,10 @@ threads = ["contour/threads"]
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+
+# Disable wasm-pack's built-in wasm-opt step. release_npm.sh runs wasm-opt
+# explicitly per variant with the right --enable-* flags. Without this, the
+# default wasm-opt invocation silently strips shared memory + atomics from
+# the threads variant.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

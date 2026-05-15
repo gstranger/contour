@@ -47,6 +47,29 @@ pub struct DirtyState {
     pub full: bool,
 }
 
+/// Snapshot of changes since a caller-supplied version, returned by
+/// `Graph::get_dirty(since)`. The accumulator backing this is the same one
+/// driving incremental region recompute, so it is cleared whenever
+/// `get_regions()` (or `dirty_reset()`) runs. Consumers doing UI sync should
+/// call `get_dirty` BEFORE any call that triggers a region pass within a
+/// frame, then advance their `since` to `current_ver`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DirtyDiff {
+    pub current_ver: u64,
+    pub since_ver: u64,
+    /// If true, the dirty window does not cover the caller's `since` (or a
+    /// topology-wide invalidation occurred); the caller should do a full
+    /// rebuild.
+    pub full: bool,
+    pub nodes_added: Vec<u32>,
+    pub nodes_removed: Vec<u32>,
+    pub nodes_moved: Vec<u32>,
+    pub edges_added: Vec<u32>,
+    pub edges_removed: Vec<u32>,
+    pub edges_modified: Vec<u32>,
+    pub bbox: Option<[f32; 4]>,
+}
+
 #[derive(Clone, Debug)]
 pub struct RegionFaceCache {
     pub key: u32,
@@ -319,6 +342,46 @@ impl Graph {
             since_ver: self.geom_ver,
             ..Default::default()
         };
+    }
+
+    /// Diff of changes since `since`. See `DirtyDiff` for semantics. The
+    /// returned `current_ver` is the graph's current `geom_version`; the
+    /// caller should store it and pass it back next tick.
+    pub fn get_dirty(&self, since: u64) -> DirtyDiff {
+        let current = self.geom_ver;
+        if since >= current {
+            return DirtyDiff {
+                current_ver: current,
+                since_ver: current,
+                ..Default::default()
+            };
+        }
+        if since < self.dirty.since_ver || self.dirty.full {
+            return DirtyDiff {
+                current_ver: current,
+                since_ver: self.dirty.since_ver,
+                full: true,
+                bbox: self.dirty.bbox.map(|(a, b, c, d)| [a, b, c, d]),
+                ..Default::default()
+            };
+        }
+        let sorted = |s: &HashSet<u32>| {
+            let mut v: Vec<u32> = s.iter().copied().collect();
+            v.sort_unstable();
+            v
+        };
+        DirtyDiff {
+            current_ver: current,
+            since_ver: self.dirty.since_ver,
+            full: false,
+            nodes_added: sorted(&self.dirty.nodes_added),
+            nodes_removed: sorted(&self.dirty.nodes_removed),
+            nodes_moved: sorted(&self.dirty.nodes_moved),
+            edges_added: sorted(&self.dirty.edges_added),
+            edges_removed: sorted(&self.dirty.edges_removed),
+            edges_modified: sorted(&self.dirty.edges_modified),
+            bbox: self.dirty.bbox.map(|(a, b, c, d)| [a, b, c, d]),
+        }
     }
 
     pub(crate) fn clear_dirty_flags(&mut self) {
@@ -951,7 +1014,9 @@ impl Graph {
             }
             let mut out = Vec::new();
             rec(points, eps2, &mut out);
-            out.push(*points.last().unwrap());
+            if let Some(last) = points.last() {
+                out.push(*last);
+            }
             out
         }
 
@@ -1012,8 +1077,10 @@ impl Graph {
                 }
             }
             if !close {
-                if *out.last().unwrap() != *points.last().unwrap() {
-                    out.push(*points.last().unwrap());
+                if let (Some(last_out), Some(last_pt)) = (out.last(), points.last()) {
+                    if *last_out != *last_pt {
+                        out.push(*last_pt);
+                    }
                 }
             }
             out
@@ -2641,14 +2708,12 @@ impl Graph {
 
         for (start_eid, edge_opt) in self.edges.iter().enumerate() {
             let start_eid = start_eid as u32;
-            if edge_opt.is_none()
-                || used_edges.contains(&start_eid)
-                || visited_edges.contains(&start_eid)
-            {
+            if used_edges.contains(&start_eid) || visited_edges.contains(&start_eid) {
                 continue;
             }
-
-            let edge = edge_opt.as_ref().unwrap();
+            let Some(edge) = edge_opt.as_ref() else {
+                continue;
+            };
             let start_node = edge.a;
 
             // Try to find a path back to start_node

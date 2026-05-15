@@ -355,7 +355,7 @@ pub fn planarize_subset_with_bbox(
 
     for (idx, s) in segs.iter().enumerate() {
         let mut ts = splits[idx].clone();
-        ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         ts.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
         for w in ts.windows(2) {
             let t0 = w[0];
@@ -677,7 +677,7 @@ pub fn planarize_subset_with_bbox_guard(
     };
     for (idx, s) in segs.iter().enumerate() {
         let mut ts = splits[idx].clone();
-        ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         ts.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
         for w in ts.windows(2) {
             let t0 = w[0];
@@ -987,7 +987,7 @@ pub fn planarize_subset_pruned(
 
     for (idx, s) in segs.iter().enumerate() {
         let mut ts = splits[idx].clone();
-        ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         ts.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
         for w in ts.windows(2) {
             let t0 = w[0];

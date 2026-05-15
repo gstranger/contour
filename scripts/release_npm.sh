@@ -18,6 +18,40 @@ echo "Building vecnet-wasm npm artifacts v$VERSION"
 rm -rf "$PKG_DIR/default" "$PKG_DIR/simd" "$PKG_DIR/threads"
 mkdir -p "$PKG_DIR/default" "$PKG_DIR/simd" "$PKG_DIR/threads"
 
+# Locate wasm-opt. wasm-pack downloads it on first build; reuse that copy when
+# present so we don't drag a second binaryen install into the script.
+find_wasm_opt() {
+  if command -v wasm-opt >/dev/null 2>&1; then
+    command -v wasm-opt
+    return 0
+  fi
+  local cached
+  cached=$(find "$HOME/.cache/.wasm-pack" "$HOME/Library/Caches/.wasm-pack" \
+    -type f -name wasm-opt 2>/dev/null | head -n1)
+  if [[ -n "$cached" ]]; then
+    echo "$cached"
+    return 0
+  fi
+  return 1
+}
+
+# Run wasm-opt with explicit feature flags so it preserves what each variant
+# was compiled with. wasm-pack's built-in step is disabled in Cargo.toml
+# metadata to give us this control — see the comment there.
+optimize_wasm() {
+  local wasm_path="$1"
+  shift
+  local wasm_opt
+  if ! wasm_opt=$(find_wasm_opt); then
+    echo "ERROR: wasm-opt not found (looked in PATH and wasm-pack cache)" >&2
+    return 1
+  fi
+  local tmp_out="${wasm_path}.opt"
+  "$wasm_opt" "$wasm_path" -o "$tmp_out" -O \
+    --enable-bulk-memory --enable-mutable-globals --enable-sign-ext "$@"
+  mv "$tmp_out" "$wasm_path"
+}
+
 update_js_import() {
   local file="$1"
   local wasm_name="$2"
@@ -68,6 +102,11 @@ build_variant() {
   mv "$tmp/contour.js" "$dest/contour.js"
   cp "$TYPES_SOURCE" "$dest/contour.d.ts"
   mv "$tmp/contour_bg.wasm" "$dest/${wasm_name}"
+  if [[ "$variant" == "simd" ]]; then
+    optimize_wasm "$dest/${wasm_name}" --enable-simd
+  else
+    optimize_wasm "$dest/${wasm_name}"
+  fi
   if [[ -f "$tmp/contour_bg.wasm.map" ]]; then
     mv "$tmp/contour_bg.wasm.map" "$dest/${wasm_name}.map"
   fi
@@ -88,14 +127,78 @@ build_variant() {
 
 build_variant "default" "" "" ""
 build_variant "simd" "simd" "-C target-feature=+simd128" ""
-if ! build_variant "threads" "threads" "-C target-feature=+atomics,+bulk-memory,+mutable-globals" "--enable-threading"; then
-  echo "Warning: threads variant failed to build; falling back to default runtime for ./threads export." >&2
-  cp "$TYPES_SOURCE" "$PKG_DIR/threads/contour.d.ts"
-  cat <<'EOTHREADSFALLBACK' > "$PKG_DIR/threads/contour.js"
-export * from "../default/contour.js";
-export { default } from "../default/contour.js";
-EOTHREADSFALLBACK
-fi
+
+# Threads variant requires nightly + rust-src + -Z build-std to recompile std
+# with atomics/bulk-memory enabled. There is no stable-Rust path. Fail loudly
+# if prereqs are missing or the build fails: a fallback to the default bundle
+# would silently ship a non-threaded artifact under the ./threads export.
+build_threads_variant() {
+  local variant="threads"
+  local dest="$PKG_DIR/$variant"
+
+  if ! rustup toolchain list 2>/dev/null | grep -q '^nightly'; then
+    echo "ERROR: threads variant requires the nightly toolchain." >&2
+    echo "  Install with: rustup toolchain install nightly" >&2
+    return 1
+  fi
+  if ! rustup component list --toolchain nightly --installed 2>/dev/null | grep -q '^rust-src'; then
+    echo "ERROR: threads variant requires rust-src on nightly (for -Z build-std)." >&2
+    echo "  Install with: rustup component add rust-src --toolchain nightly" >&2
+    return 1
+  fi
+
+  local tmp
+  tmp=$(mktemp -d)
+
+  export RUSTUP_TOOLCHAIN=nightly
+  # +atomics enables atomic instructions and tells the compiler to emit a
+  # shared memory; --shared-memory + --max-memory tell wasm-ld to actually
+  # mark the produced memory shared. Newer nightly (1.97+) requires the
+  # linker flags explicitly — older nightlies inferred them from +atomics.
+  export RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals -C link-arg=--shared-memory -C link-arg=--import-memory -C link-arg=--max-memory=4294967296 -C link-arg=--export=__heap_base -C link-arg=--export=__data_end -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base"
+  export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="$RUSTFLAGS"
+  export WASM_BINDGEN_FLAGS="--keep-debug --generate-sourcemap --enable-threading"
+
+  local status=0
+  (cd "$CRATE_DIR" && wasm-pack build --release --target web --out-dir "$tmp" --out-name contour -- --features threads -Z build-std=panic_abort,std) || status=$?
+
+  unset RUSTUP_TOOLCHAIN
+  unset RUSTFLAGS
+  unset CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS
+  unset WASM_BINDGEN_FLAGS
+
+  if [[ "$status" -ne 0 ]]; then
+    rm -rf "$tmp"
+    echo "ERROR: threads variant build failed (see logs above)." >&2
+    return "$status"
+  fi
+
+  mkdir -p "$dest"
+  local wasm_name="contour_bg_v${VERSION}_threads.wasm"
+
+  mv "$tmp/contour.js" "$dest/contour.js"
+  cp "$TYPES_SOURCE" "$dest/contour.d.ts"
+  mv "$tmp/contour_bg.wasm" "$dest/${wasm_name}"
+  optimize_wasm "$dest/${wasm_name}" --enable-threads
+  if [[ -f "$tmp/contour_bg.wasm.map" ]]; then
+    mv "$tmp/contour_bg.wasm.map" "$dest/${wasm_name}.map"
+  fi
+  if [[ -f "$tmp/contour_bg.wasm.d.ts" ]]; then
+    mv "$tmp/contour_bg.wasm.d.ts" "$dest/contour_bg_v${VERSION}_threads.wasm.d.ts"
+  fi
+  if [[ -d "$tmp/snippets" ]]; then
+    rm -rf "$dest/snippets"
+    mv "$tmp/snippets" "$dest/snippets"
+  fi
+  if [[ -f "$tmp/package.json" ]]; then
+    mv "$tmp/package.json" "$dest/wasm-pack-package.json"
+  fi
+
+  update_js_import "$dest/contour.js" "$wasm_name"
+  rm -rf "$tmp"
+}
+
+build_threads_variant
 
 node - "$NPM_DIR/package.json" "$VERSION" <<'NODE'
 const fs = require('fs');

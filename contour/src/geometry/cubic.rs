@@ -173,16 +173,15 @@ pub fn flat_position_to_cubic_t(
     // Compute cumulative arc lengths up to each segment
     let mut cumulative = Vec::with_capacity(flat_segments.len() + 1);
     cumulative.push(0.0f32);
-
+    let mut acc = 0.0f32;
     for seg in flat_segments {
-        let prev = *cumulative.last().unwrap();
         let dx = seg.1.x - seg.0.x;
         let dy = seg.1.y - seg.0.y;
-        let len = (dx * dx + dy * dy).sqrt();
-        cumulative.push(prev + len);
+        acc += (dx * dx + dy * dy).sqrt();
+        cumulative.push(acc);
     }
 
-    let total_flat_length = *cumulative.last().unwrap();
+    let total_flat_length = acc;
     if total_flat_length < 1e-10 {
         return 0.5;
     }

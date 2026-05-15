@@ -113,7 +113,14 @@ jobs:
       - name: Install wasm-pack
         run: curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
       - name: Install binaryen (wasm-opt)
-        run: sudo apt-get update && sudo apt-get install -y binaryen
+        # apt's binaryen is too old to parse wasm emitted by current Rust.
+        # Pull a recent release from GitHub instead.
+        run: |
+          set -e
+          ver=version_122
+          curl -sSfL "https://github.com/WebAssembly/binaryen/releases/download/${ver}/binaryen-${ver}-x86_64-linux.tar.gz" | sudo tar -xz -C /opt
+          sudo ln -sf "/opt/binaryen-${ver}/bin/wasm-opt" /usr/local/bin/wasm-opt
+          wasm-opt --version
       - name: Build wasm-pack release bundle
         run: |
           cd contour-wasm
@@ -122,9 +129,11 @@ jobs:
         run: |
           # Cargo.toml disables wasm-pack's wasm-opt step; run it manually so
           # we control which features are preserved.
-          wasm-opt pkg/contour_bg.wasm -o pkg/contour_bg.opt.wasm -O \
+          set -e
+          wasm=$(ls pkg/*_bg.wasm | head -n1)
+          wasm-opt "$wasm" -o "$wasm.opt" -O \
             --enable-bulk-memory --enable-mutable-globals --enable-sign-ext
-          mv pkg/contour_bg.opt.wasm pkg/contour_bg.wasm
+          mv "$wasm.opt" "$wasm"
       - name: Check size budget
         run: ./scripts/size-check.sh
 
@@ -149,7 +158,14 @@ jobs:
       - name: Install wasm-pack
         run: curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
       - name: Install binaryen (wasm-opt)
-        run: sudo apt-get update && sudo apt-get install -y binaryen
+        # apt's binaryen is too old to parse wasm emitted by current Rust.
+        # Pull a recent release from GitHub instead.
+        run: |
+          set -e
+          ver=version_122
+          curl -sSfL "https://github.com/WebAssembly/binaryen/releases/download/${ver}/binaryen-${ver}-x86_64-linux.tar.gz" | sudo tar -xz -C /opt
+          sudo ln -sf "/opt/binaryen-${ver}/bin/wasm-opt" /usr/local/bin/wasm-opt
+          wasm-opt --version
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:

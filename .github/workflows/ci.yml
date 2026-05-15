@@ -112,23 +112,17 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Install wasm-pack
         run: curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+      - name: Install binaryen (wasm-opt)
+        run: sudo apt-get update && sudo apt-get install -y binaryen
       - name: Build wasm-pack release bundle
         run: |
           cd contour-wasm
           wasm-pack build --release --target web --out-dir ../pkg
       - name: Optimize with wasm-opt (preserved features)
         run: |
-          # Cargo.toml disables wasm-pack's wasm-opt step; run it manually.
-          set -e
-          wasm_opt=$(find "$HOME/.cache/.wasm-pack" -type f -name wasm-opt 2>/dev/null | head -n1)
-          if [ -z "$wasm_opt" ]; then
-            wasm_opt=$(command -v wasm-opt || true)
-          fi
-          if [ -z "$wasm_opt" ]; then
-            echo "wasm-opt not found" >&2
-            exit 1
-          fi
-          "$wasm_opt" pkg/contour_bg.wasm -o pkg/contour_bg.opt.wasm -O \
+          # Cargo.toml disables wasm-pack's wasm-opt step; run it manually so
+          # we control which features are preserved.
+          wasm-opt pkg/contour_bg.wasm -o pkg/contour_bg.opt.wasm -O \
             --enable-bulk-memory --enable-mutable-globals --enable-sign-ext
           mv pkg/contour_bg.opt.wasm pkg/contour_bg.wasm
       - name: Check size budget
@@ -154,6 +148,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Install wasm-pack
         run: curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+      - name: Install binaryen (wasm-opt)
+        run: sudo apt-get update && sudo apt-get install -y binaryen
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:

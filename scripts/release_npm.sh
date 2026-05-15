@@ -151,7 +151,11 @@ build_threads_variant() {
   tmp=$(mktemp -d)
 
   export RUSTUP_TOOLCHAIN=nightly
-  export RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals"
+  # +atomics enables atomic instructions and tells the compiler to emit a
+  # shared memory; --shared-memory + --max-memory tell wasm-ld to actually
+  # mark the produced memory shared. Newer nightly (1.97+) requires the
+  # linker flags explicitly — older nightlies inferred them from +atomics.
+  export RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals -C link-arg=--shared-memory -C link-arg=--import-memory -C link-arg=--max-memory=4294967296 -C link-arg=--export=__heap_base -C link-arg=--export=__data_end -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base"
   export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="$RUSTFLAGS"
   export WASM_BINDGEN_FLAGS="--keep-debug --generate-sourcemap --enable-threading"
 
@@ -175,13 +179,7 @@ build_threads_variant() {
   mv "$tmp/contour.js" "$dest/contour.js"
   cp "$TYPES_SOURCE" "$dest/contour.d.ts"
   mv "$tmp/contour_bg.wasm" "$dest/${wasm_name}"
-  echo "DEBUG: threads pre-opt size=$(wc -c < "$dest/${wasm_name}") bytes" >&2
-  echo "DEBUG: threads pre-opt verify-threads:" >&2
-  node "$ROOT/scripts/verify-threads.mjs" "$dest/${wasm_name}" >&2 || true
   optimize_wasm "$dest/${wasm_name}" --enable-threads
-  echo "DEBUG: threads post-opt size=$(wc -c < "$dest/${wasm_name}") bytes" >&2
-  echo "DEBUG: threads post-opt verify-threads:" >&2
-  node "$ROOT/scripts/verify-threads.mjs" "$dest/${wasm_name}" >&2 || true
   if [[ -f "$tmp/contour_bg.wasm.map" ]]; then
     mv "$tmp/contour_bg.wasm.map" "$dest/${wasm_name}.map"
   fi

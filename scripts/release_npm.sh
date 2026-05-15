@@ -175,7 +175,13 @@ build_threads_variant() {
   mv "$tmp/contour.js" "$dest/contour.js"
   cp "$TYPES_SOURCE" "$dest/contour.d.ts"
   mv "$tmp/contour_bg.wasm" "$dest/${wasm_name}"
+  echo "DEBUG: threads pre-opt size=$(wc -c < "$dest/${wasm_name}") bytes" >&2
+  echo "DEBUG: threads pre-opt verify-threads:" >&2
+  node "$ROOT/scripts/verify-threads.mjs" "$dest/${wasm_name}" >&2 || true
   optimize_wasm "$dest/${wasm_name}" --enable-threads
+  echo "DEBUG: threads post-opt size=$(wc -c < "$dest/${wasm_name}") bytes" >&2
+  echo "DEBUG: threads post-opt verify-threads:" >&2
+  node "$ROOT/scripts/verify-threads.mjs" "$dest/${wasm_name}" >&2 || true
   if [[ -f "$tmp/contour_bg.wasm.map" ]]; then
     mv "$tmp/contour_bg.wasm.map" "$dest/${wasm_name}.map"
   fi

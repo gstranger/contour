@@ -1,4 +1,4 @@
-use crate::geometry::limits;
+use crate::geometry::{arc, limits};
 use crate::model::{EdgeKind, FontStyle, TextAlign};
 use crate::Graph;
 use std::collections::HashMap;
@@ -288,6 +288,24 @@ pub fn add_svg_path_impl(g: &mut Graph, d: &str, rgba: Option<(u8, u8, u8, u8, f
             }
         }
     }
+    // SVG arc flags are a single 0 or 1 digit with no required separator.
+    // `A50,50 0 01100,0` is legal and the flags are `0` then `1`.
+    fn parse_flag(bytes: &[u8], i: &mut usize) -> Option<bool> {
+        skip_ws(bytes, i);
+        if *i >= bytes.len() {
+            return None;
+        }
+        let c = bytes[*i];
+        if c == b'0' {
+            *i += 1;
+            Some(false)
+        } else if c == b'1' {
+            *i += 1;
+            Some(true)
+        } else {
+            None
+        }
+    }
     fn parse_num(bytes: &[u8], i: &mut usize) -> Option<f32> {
         skip_ws(bytes, i);
         let start = *i;
@@ -324,7 +342,10 @@ pub fn add_svg_path_impl(g: &mut Graph, d: &str, rgba: Option<(u8, u8, u8, u8, f
             break;
         }
         let c = bytes[i];
-        let is_cmd = matches!(c, b'M' | b'm' | b'L' | b'l' | b'C' | b'c' | b'Z' | b'z');
+        let is_cmd = matches!(
+            c,
+            b'M' | b'm' | b'L' | b'l' | b'C' | b'c' | b'A' | b'a' | b'Z' | b'z'
+        );
         let cmd = if is_cmd {
             i += 1;
             c
@@ -359,7 +380,10 @@ pub fn add_svg_path_impl(g: &mut Graph, d: &str, rgba: Option<(u8, u8, u8, u8, f
                         break;
                     }
                     let peek = bytes[i];
-                    if matches!(peek, b'M' | b'm' | b'L' | b'l' | b'C' | b'c' | b'Z' | b'z') {
+                    if matches!(
+                        peek,
+                        b'M' | b'm' | b'L' | b'l' | b'C' | b'c' | b'A' | b'a' | b'Z' | b'z'
+                    ) {
                         break;
                     }
                     let mut nx = match parse_num(bytes, &mut i) {
@@ -439,7 +463,10 @@ pub fn add_svg_path_impl(g: &mut Graph, d: &str, rgba: Option<(u8, u8, u8, u8, f
                         break;
                     }
                     let peek = bytes[i];
-                    if matches!(peek, b'M' | b'm' | b'L' | b'l' | b'C' | b'c' | b'Z' | b'z') {
+                    if matches!(
+                        peek,
+                        b'M' | b'm' | b'L' | b'l' | b'C' | b'c' | b'A' | b'a' | b'Z' | b'z'
+                    ) {
                         break;
                     }
                 }
@@ -514,7 +541,119 @@ pub fn add_svg_path_impl(g: &mut Graph, d: &str, rgba: Option<(u8, u8, u8, u8, f
                         break;
                     }
                     let peek = bytes[i];
-                    if matches!(peek, b'M' | b'm' | b'L' | b'l' | b'C' | b'c' | b'Z' | b'z') {
+                    if matches!(
+                        peek,
+                        b'M' | b'm' | b'L' | b'l' | b'C' | b'c' | b'A' | b'a' | b'Z' | b'z'
+                    ) {
+                        break;
+                    }
+                }
+            }
+            b'A' | b'a' => {
+                cmd_count += 1;
+                if cmd_count > limits::MAX_SVG_COMMANDS {
+                    return edges_added;
+                }
+                loop {
+                    let rx = match parse_num(bytes, &mut i) {
+                        Some(v) => v,
+                        None => break,
+                    };
+                    let ry = match parse_num(bytes, &mut i) {
+                        Some(v) => v,
+                        None => break,
+                    };
+                    let phi_deg = match parse_num(bytes, &mut i) {
+                        Some(v) => v,
+                        None => break,
+                    };
+                    let large = match parse_flag(bytes, &mut i) {
+                        Some(v) => v,
+                        None => break,
+                    };
+                    let sweep = match parse_flag(bytes, &mut i) {
+                        Some(v) => v,
+                        None => break,
+                    };
+                    let mut x = match parse_num(bytes, &mut i) {
+                        Some(v) => v,
+                        None => break,
+                    };
+                    let mut y = match parse_num(bytes, &mut i) {
+                        Some(v) => v,
+                        None => break,
+                    };
+                    if cmd == b'a' {
+                        x += cur.0;
+                        y += cur.1;
+                    }
+                    if !limits::in_coord_bounds(x) || !limits::in_coord_bounds(y) {
+                        return edges_added;
+                    }
+                    let cubics = arc::arc_to_cubics(cur, rx, ry, phi_deg, large, sweep, (x, y));
+                    if cubics.is_empty() {
+                        // Degenerate arc (zero radius or coincident endpoints).
+                        // Per SVG spec, emit a straight line if endpoints differ.
+                        if cur.0 != x || cur.1 != y {
+                            let a_id = get_node(cur.0, cur.1, g);
+                            let b_id = get_node(x, y, g);
+                            if a_id != b_id {
+                                if let Some(eid) = g.add_edge(a_id, b_id) {
+                                    if let Some((r, gg, b, aa, w)) = rgba {
+                                        if limits::in_width_bounds(w) {
+                                            g.set_edge_style(eid, r, gg, b, aa, w);
+                                        }
+                                    }
+                                    edges_added += 1;
+                                    segs += 1;
+                                    if segs > limits::MAX_SVG_SEGMENTS {
+                                        return edges_added;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        let mut from = cur;
+                        for ((p1x, p1y), (p2x, p2y), (ex, ey)) in cubics {
+                            if !limits::in_coord_bounds(p1x)
+                                || !limits::in_coord_bounds(p1y)
+                                || !limits::in_coord_bounds(p2x)
+                                || !limits::in_coord_bounds(p2y)
+                                || !limits::in_coord_bounds(ex)
+                                || !limits::in_coord_bounds(ey)
+                            {
+                                return edges_added;
+                            }
+                            let a_id = get_node(from.0, from.1, g);
+                            let b_id = get_node(ex, ey, g);
+                            if a_id != b_id {
+                                if let Some(eid) = g.add_edge(a_id, b_id) {
+                                    g.set_edge_cubic(eid, p1x, p1y, p2x, p2y);
+                                    if let Some((r, gg, b, aa, w)) = rgba {
+                                        if limits::in_width_bounds(w) {
+                                            g.set_edge_style(eid, r, gg, b, aa, w);
+                                        }
+                                    }
+                                    edges_added += 1;
+                                    segs += 1;
+                                    if segs > limits::MAX_SVG_SEGMENTS {
+                                        return edges_added;
+                                    }
+                                }
+                            }
+                            from = (ex, ey);
+                        }
+                    }
+                    cur = (x, y);
+                    skip_ws(bytes, &mut i);
+                    if i >= bytes.len() {
+                        break;
+                    }
+                    let peek = bytes[i];
+                    if matches!(
+                        peek,
+                        b'M' | b'm' | b'L' | b'l' | b'C' | b'c' | b'A' | b'a' | b'Z' | b'z'
+                    ) {
                         break;
                     }
                 }

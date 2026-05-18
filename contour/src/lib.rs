@@ -1,6 +1,7 @@
 pub mod layers;
 pub mod model;
 pub mod geometry {
+    pub mod arc;
     pub mod cubic;
     pub mod flatten;
     pub mod intersect;

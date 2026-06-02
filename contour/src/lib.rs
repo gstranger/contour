@@ -2183,6 +2183,37 @@ impl Graph {
         self.pick_index.borrow_mut().take();
         self.mark_full_dirty();
     }
+
+    // --- Undo/redo public helpers ---
+
+    /// Check if an undo group is currently open.
+    pub fn is_undo_group_open(&self) -> bool {
+        self.undo_group_depth > 0
+    }
+
+    /// Check if there are entries in the undo stack.
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    /// Check if there are entries in the redo stack.
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
+    /// Clear both undo and redo stacks and reset group state.
+    pub fn undo_clear(&mut self) {
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.undo_group_depth = 0;
+        self.current_snapshot = None;
+        self.current_undo_label = None;
+    }
+
+    /// Get the depth of both undo and redo stacks.
+    pub fn undo_depth(&self) -> (usize, usize) {
+        (self.undo_stack.len(), self.redo_stack.len())
+    }
 }
 
 // Layer and group management
@@ -3785,6 +3816,7 @@ impl Graph {
                         y,
                         w,
                         char_index: i as u32,
+                        line_index: 0,
                     });
                     x += w + letter_spacing_px;
                 }
@@ -3802,7 +3834,7 @@ impl Graph {
                 );
 
                 let mut char_idx = 0u32;
-                for line in &layout.lines {
+                for (line_num, line) in layout.lines.iter().enumerate() {
                     let mut x = line.x_offset;
                     for _ch in line.text.chars() {
                         let w = metrics.char_widths
@@ -3814,6 +3846,7 @@ impl Graph {
                             y: line.y_offset,
                             w,
                             char_index: char_idx,
+                            line_index: line_num as u32,
                         });
                         x += w + letter_spacing_px;
                         char_idx += 1;
@@ -3832,6 +3865,7 @@ impl Graph {
                         y,
                         w,
                         char_index: i as u32,
+                        line_index: 0,
                     });
                     x += w + letter_spacing_px;
                 }
@@ -3861,7 +3895,6 @@ impl Graph {
 
         let mut best_idx = None;
         let mut best_dist2 = f32::MAX;
-        let line_idx = 0u32;
 
         for pos in &layout.char_positions {
             let cx = pos.x + pos.w * 0.5;
@@ -3871,7 +3904,7 @@ impl Graph {
             let d2 = dx * dx + dy * dy;
             if d2 < best_dist2 {
                 best_dist2 = d2;
-                best_idx = Some((pos.char_index, line_idx));
+                best_idx = Some((pos.char_index, pos.line_index));
             }
         }
 

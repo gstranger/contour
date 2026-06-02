@@ -481,6 +481,8 @@ pub struct TextCharPosition {
     pub y: f32,
     pub w: f32,
     pub char_index: u32,
+    /// Line number (0-indexed) for multi-line text boxes
+    pub line_index: u32,
 }
 
 /// Text measurement result from an external font provider.

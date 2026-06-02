@@ -229,6 +229,16 @@ impl Graph {
     }
 }
 
+/// Standalone: get a point at a specific distance along a path defined by edge IDs.
+/// Returns position (x, y) and tangent angle in radians, or None if distance is out of range
+/// or any edge is invalid.
+///
+/// This is a convenience wrapper around Graph::point_on_path for text-on-path rendering
+/// where the caller may not have mutable access to the graph.
+pub fn sample_path_point(g: &Graph, edge_ids: &[u32], distance: f32) -> Option<PathPoint> {
+    g.point_on_path(edge_ids, distance)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +315,30 @@ mod tests {
         assert!((positions[0].x - 0.0).abs() < 0.001);
         assert!((positions[1].x - 10.0).abs() < 0.001);
         assert!((positions[2].x - 20.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_standalone_sample_path_point() {
+        let mut g = Graph::new();
+        let n0 = g.add_node(0.0, 0.0);
+        let n1 = g.add_node(100.0, 0.0);
+        let e = g.add_edge(n0, n1).unwrap();
+
+        let p = sample_path_point(&g, &[e], 30.0).unwrap();
+        assert!((p.x - 30.0).abs() < 0.001);
+        assert!((p.y - 0.0).abs() < 0.001);
+        assert!((p.angle - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_sample_path_point_past_end() {
+        let mut g = Graph::new();
+        let n0 = g.add_node(0.0, 0.0);
+        let n1 = g.add_node(100.0, 0.0);
+        let e = g.add_edge(n0, n1).unwrap();
+
+        // Distance past end returns the endpoint
+        let p = sample_path_point(&g, &[e], 200.0).unwrap();
+        assert!((p.x - 100.0).abs() < 0.001);
     }
 }

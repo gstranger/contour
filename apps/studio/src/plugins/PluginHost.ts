@@ -15,6 +15,7 @@ type Listener = (...args: any[]) => void;
 export class PluginHost {
   private manifests = new Map<string, PluginManifest>();
   private toolCache: ToolEntry[] | null = null;
+  private toolOwner = new Map<string, string>(); // toolId → manifestId
   private activeToolId: string | null = null;
   private listeners = new Map<string, Set<Listener>>();
 
@@ -25,18 +26,24 @@ export class PluginHost {
     }
     this.manifests.set(manifest.id, manifest);
     this.toolCache = null;
+    for (const tool of manifest.tools ?? []) {
+      this.toolOwner.set(tool.id, manifest.id);
+    }
     this.emit("registered", manifest);
   }
 
   unregister(id: string): void {
     if (this.activeToolId) {
-      const active = this.getActiveTool();
-      if (active?.id === id || active?.plugin.id.startsWith(id + ".")) {
+      const ownerId = this.toolOwner.get(this.activeToolId);
+      if (ownerId === id) {
         this.deactivateTool();
       }
     }
     this.manifests.delete(id);
     this.toolCache = null;
+    for (const [toolId, ownerId] of this.toolOwner) {
+      if (ownerId === id) this.toolOwner.delete(toolId);
+    }
   }
 
   /** All registered tools across all manifests */
@@ -73,8 +80,13 @@ export class PluginHost {
     const prev = this.getActiveTool();
     if (prev) prev.plugin.onDeactivate?.();
     this.activeToolId = id;
-    const next = this.getActiveTool();
-    this.emit("toolChanged", next ?? null);
+    this.emit("toolChanged", this.getActiveTool() ?? null);
+  }
+
+  /** Notify the active tool of its activation context. Called by the React hook. */
+  notifyToolActivated(ctx: ToolContext): void {
+    const tool = this.getActiveTool();
+    tool?.plugin.onActivate?.(ctx);
   }
 
   deactivateTool(): void {

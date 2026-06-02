@@ -178,6 +178,70 @@ export class GraphService {
     this.emit();
   }
 
+  removeNode(id: number): void {
+    unwrapResult(this.graph.remove_node_res(id), "Failed to remove node");
+    this.emit();
+  }
+
+  removeEdge(id: number): void {
+    unwrapResult(this.graph.remove_edge_res(id), "Failed to remove edge");
+    this.emit();
+  }
+
+  setEdgeCubic(id: number, p1x: number, p1y: number, p2x: number, p2y: number): void {
+    unwrapResult(
+      this.graph.set_edge_cubic_res(id, p1x, p1y, p2x, p2y),
+      "Failed to set edge to cubic",
+    );
+    this.emit();
+  }
+
+  setEdgeLine(id: number): void {
+    unwrapResult(this.graph.set_edge_line_res(id), "Failed to set edge to line");
+    this.emit();
+  }
+
+  bendEdgeTo(id: number, t: number, tx: number, ty: number, stiffness: number): void {
+    unwrapResult(
+      this.graph.bend_edge_to_res(id, t, tx, ty, stiffness),
+      "Failed to bend edge",
+    );
+    this.emit();
+  }
+
+  clear(): void {
+    this.graph.clear();
+    this.emit();
+  }
+
+  addFreehand(points: Float32Array, close: boolean): Uint32Array {
+    const edges = this.graph.add_freehand(points, close);
+    this.emit();
+    return edges;
+  }
+
+  addFreehandRes(points: Float32Array, close: boolean): Uint32Array {
+    const edges = unwrapResult(
+      this.graph.add_freehand_res(points, close),
+      "Failed to add freehand",
+    );
+    this.emit();
+    return edges;
+  }
+
+  importSvg(d: string): number {
+    const count = unwrapResult(
+      this.graph.add_svg_path_res(d),
+      "Failed to import SVG",
+    );
+    this.emit();
+    return count;
+  }
+
+  getSvgPaths(): string[] {
+    return unwrapResult(this.graph.to_svg_paths_res(), "Failed to get SVG paths");
+  }
+
   private emit(): void {
     const snapshot = this.snapshot();
     this.listeners.forEach((listener) => listener(snapshot));

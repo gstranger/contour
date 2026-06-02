@@ -421,6 +421,19 @@ impl Graph {
         self.dirty.nodes_added.insert(id);
         self.expand_dirty_bbox_pt(x, y);
         self.bump();
+
+        if self.undo_group_depth > 0 {
+            self.snapshot_node(id);
+        } else {
+            self.redo_stack.clear();
+            self.undo_stack.push(crate::undo::UndoEntry {
+                label: "add node".into(),
+                action: crate::undo::UndoAction::Command(
+                    crate::undo::UndoCommand::AddNode { id, pos: (x, y) },
+                ),
+            });
+        }
+
         id
     }
     pub fn move_node(&mut self, id: u32, x: f32, y: f32) -> bool {
@@ -454,6 +467,7 @@ impl Graph {
         }
         self.expand_dirty_bbox_around(oldx, oldy, 12.0);
         self.expand_dirty_bbox_around(x, y, 12.0);
+        self.snapshot_node(id);
         self.bump();
         true
     }
@@ -469,10 +483,12 @@ impl Graph {
             None => return false,
         };
         let mut incident: Vec<usize> = Vec::new();
+        let mut incident_edges_with_state: Vec<(u32, Edge)> = Vec::new();
         for (eid, e) in self.edges.iter().enumerate() {
             if let Some(edge) = e {
                 if edge.a == id || edge.b == id {
                     incident.push(eid);
+                    incident_edges_with_state.push((eid as u32, edge.clone()));
                 }
             }
         }
@@ -488,10 +504,31 @@ impl Graph {
             if let Some(slot) = self.edges.get_mut(eid) {
                 *slot = None;
             }
+            self.layer_system.remove_edge(eid as u32);
             self.dirty.edges_removed.insert(eid as u32);
         }
         self.expand_dirty_bbox_around(nx, ny, 12.0);
         self.dirty.nodes_removed.insert(id);
+
+        if self.undo_group_depth > 0 {
+            self.snapshot_node(id);
+            for &(eid, _) in &incident_edges_with_state {
+                self.snapshot_edge(eid);
+            }
+        } else {
+            self.redo_stack.clear();
+            self.undo_stack.push(crate::undo::UndoEntry {
+                label: "remove node".into(),
+                action: crate::undo::UndoAction::Command(
+                    crate::undo::UndoCommand::RemoveNode {
+                        id,
+                        pos: (nx, ny),
+                        incident: incident_edges_with_state,
+                    },
+                ),
+            });
+        }
+
         self.bump();
         true
     }
@@ -544,23 +581,59 @@ impl Graph {
             self.expand_dirty_bbox_box(Some((minx, miny, maxx, maxy)));
         }
         self.bump();
+
+        if self.undo_group_depth > 0 {
+            self.snapshot_edge(id);
+        } else {
+            let edge_snapshot = self.edges[id as usize].clone();
+            self.redo_stack.clear();
+            self.undo_stack.push(crate::undo::UndoEntry {
+                label: "add edge".into(),
+                action: crate::undo::UndoAction::Command(
+                    crate::undo::UndoCommand::AddEdge {
+                        id,
+                        a,
+                        b,
+                        edge: edge_snapshot.unwrap(),
+                    },
+                ),
+            });
+        }
+
         Some(id)
     }
     pub fn remove_edge(&mut self, id: u32) -> bool {
-        let old_bb = if let Some(Some(edge)) = self.edges.get(id as usize) {
-            self.edge_aabb_of(edge)
+        let old = if let Some(Some(edge)) = self.edges.get(id as usize) {
+            edge.clone()
         } else {
-            None
+            return false;
         };
+        if let Some(bb) = self.edge_aabb_of(&old) {
+            self.expand_dirty_bbox_box(Some(bb));
+        }
         if let Some(slot) = self.edges.get_mut(id as usize) {
             if slot.is_some() {
                 *slot = None;
-                // Remove from layer system
                 self.layer_system.remove_edge(id);
-                if let Some(bb) = old_bb {
-                    self.expand_dirty_bbox_box(Some(bb));
-                }
                 self.dirty.edges_removed.insert(id);
+
+                if self.undo_group_depth > 0 {
+                    self.snapshot_edge(id);
+                } else {
+                    self.redo_stack.clear();
+                    self.undo_stack.push(crate::undo::UndoEntry {
+                        label: "remove edge".into(),
+                        action: crate::undo::UndoAction::Command(
+                            crate::undo::UndoCommand::RemoveEdge {
+                                id,
+                                endpoint_a: old.a,
+                                endpoint_b: old.b,
+                                edge: old,
+                            },
+                        ),
+                    });
+                }
+
                 self.bump();
                 return true;
             }
@@ -1742,6 +1815,53 @@ impl Graph {
 
     fn bump(&mut self) {
         self.geom_ver = self.geom_ver.wrapping_add(1);
+    }
+
+    // --- Snapshot recording helpers ---
+
+    fn snapshot_node(&mut self, id: u32) {
+        if let Some(ref mut snap) = self.current_snapshot {
+            if !snap.nodes.iter().any(|(nid, _)| *nid == id) {
+                let state = self.nodes.get(id as usize).and_then(|n| *n);
+                snap.nodes.push((id, state));
+            }
+        }
+    }
+
+    fn snapshot_edge(&mut self, id: u32) {
+        if let Some(ref mut snap) = self.current_snapshot {
+            if !snap.edges.iter().any(|(eid, _)| *eid == id) {
+                let state = self.edges.get(id as usize).and_then(|e| e.clone());
+                snap.edges.push((id, state));
+            }
+        }
+    }
+
+    fn snapshot_fill(&mut self, key: u32) {
+        if let Some(ref mut snap) = self.current_snapshot {
+            if !snap.fills.iter().any(|(k, _)| *k == key) {
+                let state = self.fills.get(&key).copied();
+                snap.fills.push((key, state));
+            }
+        }
+    }
+
+    fn snapshot_shape(&mut self, id: u32) {
+        if let Some(ref mut snap) = self.current_snapshot {
+            if !snap.shapes.iter().any(|(sid, _)| *sid == id) {
+                let state = self.shapes.get(id as usize).and_then(|s| s.clone());
+                snap.shapes.push((id, state));
+            }
+        }
+    }
+
+    fn snapshot_text(&mut self, id: u32) {
+        if let Some(ref mut snap) = self.current_snapshot {
+            if !snap.texts.iter().any(|(tid, _)| *tid == id) {
+                let state = self.texts.get(id as usize).and_then(|t| t.clone());
+                snap.texts.push((id, state));
+            }
+        }
     }
 
     // --- Undo group lifecycle ---
@@ -2985,6 +3105,9 @@ impl Graph {
             text.position.x = cx + dx * cos_a - dy * sin_a;
             text.position.y = cy + dx * sin_a + dy * cos_a;
             text.rotation += angle;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3011,6 +3134,9 @@ impl Graph {
                 *width *= sx.abs();
                 *height *= sy.abs();
             }
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false

@@ -5,7 +5,7 @@
 use crate::model::{Edge, FillState, Node, Shape, TextElement};
 use std::collections::VecDeque;
 
-pub(crate) const MAX_UNDO_DEPTH: usize = 256;
+pub const MAX_UNDO_DEPTH: usize = 256;
 
 /// A stack of undo or redo entries. Evicts oldest when cap exceeded.
 pub(crate) struct UndoStack {

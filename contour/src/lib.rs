@@ -29,8 +29,9 @@ use layers::LayerSystem;
 use model::{
     Color, ColorStop, DropShadow, Edge, EdgeKind, Effect, EffectId, EffectStack, FillRule,
     FillState, FontStyle, Gradient, GradientId, GradientUnits, HandleMode, LayerId, LinearGradient,
-    Node, PrimitiveResult, RadialGradient, Shape, SpreadMethod, TextAlign, TextElement, TextId,
-    TextOverflow, TextStyle, TextType, Vec2, VerticalAlign,
+    Node, PrimitiveResult, RadialGradient, Shape, SpreadMethod, TextAlign, TextCacheLayout,
+    TextCharPosition, TextElement, TextId, TextMeasureResult, TextMetrics, TextOverflow,
+    TextStyle, TextType, Vec2, VerticalAlign,
 };
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -451,6 +452,7 @@ impl Graph {
         {
             return true;
         }
+        self.snapshot_node(id);
         if let Some(Some(n)) = self.nodes.get_mut(id as usize) {
             n.x = x;
             n.y = y;
@@ -467,7 +469,6 @@ impl Graph {
         }
         self.expand_dirty_bbox_around(oldx, oldy, 12.0);
         self.expand_dirty_bbox_around(x, y, 12.0);
-        self.snapshot_node(id);
         self.bump();
         true
     }
@@ -765,6 +766,7 @@ impl Graph {
     }
     // set_edge_cubic defined below with guards
     pub fn set_edge_line(&mut self, id: u32) -> bool {
+        self.snapshot_edge(id);
         let changed = if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
             if matches!(edge.kind, EdgeKind::Line) {
                 false
@@ -777,7 +779,6 @@ impl Graph {
         };
         if changed {
             self.mark_edge_endpoints_dirty(id, 12.0);
-            self.snapshot_edge(id);
             self.bump();
         }
         true
@@ -817,6 +818,7 @@ impl Graph {
         if !x.is_finite() || !y.is_finite() {
             return false;
         }
+        self.snapshot_edge(id);
         let changed = {
             let edge = match self.edges.get_mut(id as usize) {
                 Some(Some(edge)) => edge,
@@ -863,12 +865,12 @@ impl Graph {
         };
         if changed {
             self.mark_edge_endpoints_dirty(id, 12.0);
-            self.snapshot_edge(id);
             self.bump();
         }
         true
     }
     pub fn set_handle_mode(&mut self, id: u32, mode: u8) -> bool {
+        self.snapshot_edge(id);
         let changed = {
             let edge = match self.edges.get_mut(id as usize) {
                 Some(Some(edge)) => edge,
@@ -892,7 +894,6 @@ impl Graph {
         };
         if changed {
             self.mark_edge_endpoints_dirty(id, 12.0);
-            self.snapshot_edge(id);
             self.bump();
         }
         true
@@ -901,6 +902,7 @@ impl Graph {
         if !p1x.is_finite() || !p1y.is_finite() || !p2x.is_finite() || !p2y.is_finite() {
             return false;
         }
+        self.snapshot_edge(id);
         let changed = {
             let edge = match self.edges.get_mut(id as usize) {
                 Some(Some(edge)) => edge,
@@ -959,12 +961,12 @@ impl Graph {
         };
         if changed {
             self.mark_edge_endpoints_dirty(id, 12.0);
-            self.snapshot_edge(id);
             self.bump();
         }
         true
     }
     pub fn bend_edge_to(&mut self, id: u32, t: f32, tx: f32, ty: f32, stiffness: f32) -> bool {
+        self.snapshot_edge(id);
         let did_change = {
             let edge = match self.edges.get_mut(id as usize) {
                 Some(Some(edge)) => edge,
@@ -1055,7 +1057,6 @@ impl Graph {
         };
         if did_change {
             self.mark_edge_endpoints_dirty(id, 12.0);
-            self.snapshot_edge(id);
             self.bump();
         }
         true
@@ -3725,5 +3726,178 @@ impl Graph {
             }
         }
         false
+    }
+
+    /// Poll whether a text element needs JS-side font measurement.
+    /// Returns None if the text ID is invalid.
+    /// Returns `needs_measure: true` if content/style changed since last measure.
+    /// Returns `needs_measure: false` with cached metrics if still fresh.
+    pub fn measure_text(&self, id: TextId) -> Option<TextMeasureResult> {
+        let text = self.texts.get(id as usize)?.as_ref()?;
+        if text.cached_metrics.is_none() {
+            Some(TextMeasureResult {
+                needs_measure: true,
+                content: text.content.clone(),
+                style: text.style.clone(),
+                char_widths: Vec::new(),
+                line_height: 0.0,
+                ascent: 0.0,
+                descent: 0.0,
+                total_width: 0.0,
+            })
+        } else {
+            let m = text.cached_metrics.as_ref().unwrap();
+            Some(TextMeasureResult {
+                needs_measure: false,
+                content: String::new(),
+                style: TextStyle::default(),
+                char_widths: m.char_widths.clone(),
+                line_height: m.line_height,
+                ascent: m.ascent,
+                descent: m.descent,
+                total_width: m.total_width,
+            })
+        }
+    }
+
+    /// Store JS-measured text metrics and recompute per-character layout.
+    /// Returns false if the text ID is invalid.
+    pub fn set_text_metrics(&mut self, id: TextId, metrics: TextMetrics) -> bool {
+        let text = match self.texts.get_mut(id as usize) {
+            Some(Some(t)) => t,
+            _ => return false,
+        };
+
+        // Compute character positions from metrics
+        let mut char_positions = Vec::with_capacity(metrics.char_widths.len());
+        let chars: Vec<char> = text.content.chars().collect();
+        let letter_spacing_px = text.style.letter_spacing * text.style.font_size;
+
+        match &text.text_type {
+            TextType::Label => {
+                let mut x = 0.0f32;
+                let y = metrics.ascent;
+
+                for (i, _ch) in chars.iter().enumerate() {
+                    let w = metrics.char_widths.get(i).copied().unwrap_or(metrics.line_height * 0.5);
+                    char_positions.push(TextCharPosition {
+                        x,
+                        y,
+                        w,
+                        char_index: i as u32,
+                    });
+                    x += w + letter_spacing_px;
+                }
+            }
+            TextType::Box { width, height, vertical_align, overflow: _overflow } => {
+                use crate::algorithms::text_layout::layout_text_box;
+                let layout = layout_text_box(
+                    &text.content,
+                    *width,
+                    *height,
+                    &text.style,
+                    &metrics.char_widths,
+                    text.align,
+                    *vertical_align,
+                );
+
+                let mut char_idx = 0u32;
+                for line in &layout.lines {
+                    let mut x = line.x_offset;
+                    for _ch in line.text.chars() {
+                        let w = metrics.char_widths
+                            .get(char_idx as usize)
+                            .copied()
+                            .unwrap_or(metrics.line_height * 0.5);
+                        char_positions.push(TextCharPosition {
+                            x,
+                            y: line.y_offset,
+                            w,
+                            char_index: char_idx,
+                        });
+                        x += w + letter_spacing_px;
+                        char_idx += 1;
+                    }
+                    // Skip newline character index
+                    char_idx += 1;
+                }
+            }
+            TextType::OnPath { .. } => {
+                let mut x = 0.0f32;
+                let y = metrics.ascent;
+                for (i, _ch) in chars.iter().enumerate() {
+                    let w = metrics.char_widths.get(i).copied().unwrap_or(metrics.line_height * 0.5);
+                    char_positions.push(TextCharPosition {
+                        x,
+                        y,
+                        w,
+                        char_index: i as u32,
+                    });
+                    x += w + letter_spacing_px;
+                }
+            }
+        }
+
+        text.cached_metrics = Some(metrics);
+        text.cached_layout = Some(TextCacheLayout { char_positions });
+        true
+    }
+
+    /// Get per-character positions for cursor placement and hit testing.
+    /// Returns None if the text ID is invalid or no layout has been computed.
+    pub fn get_text_char_positions(&self, id: TextId) -> Option<Vec<TextCharPosition>> {
+        let text = self.texts.get(id as usize)?.as_ref()?;
+        let layout = text.cached_layout.as_ref()?;
+        Some(layout.char_positions.clone())
+    }
+
+    /// Hit-test: which character is at world-coordinate (x, y)?
+    /// Returns (char_index, line_index) or None.
+    pub fn get_text_hit(&self, id: TextId, wx: f32, wy: f32) -> Option<(u32, u32)> {
+        let text = self.texts.get(id as usize)?.as_ref()?;
+        let layout = text.cached_layout.as_ref()?;
+        let tx = wx - text.position.x;
+        let ty = wy - text.position.y;
+
+        let mut best_idx = None;
+        let mut best_dist2 = f32::MAX;
+        let line_idx = 0u32;
+
+        for pos in &layout.char_positions {
+            let cx = pos.x + pos.w * 0.5;
+            let cy = pos.y;
+            let dx = tx - cx;
+            let dy = ty - cy;
+            let d2 = dx * dx + dy * dy;
+            if d2 < best_dist2 {
+                best_dist2 = d2;
+                best_idx = Some((pos.char_index, line_idx));
+            }
+        }
+
+        best_idx
+    }
+
+    /// Get selection highlight rectangles for a character range.
+    /// Returns None if the text ID is invalid or no layout exists.
+    pub fn get_text_selection_bounds(&self, id: TextId, start: u32, end: u32) -> Option<Vec<[f32; 4]>> {
+        let text = self.texts.get(id as usize)?.as_ref()?;
+        let layout = text.cached_layout.as_ref()?;
+        let start = start.min(end);
+        let end = end.max(start);
+
+        let line_height = text.cached_metrics.as_ref()
+            .map(|m| m.line_height)
+            .unwrap_or(text.style.font_size * text.style.line_height);
+
+        let mut rects = Vec::new();
+        for pos in &layout.char_positions {
+            if pos.char_index >= start && pos.char_index < end {
+                let x = text.position.x + pos.x;
+                let y = text.position.y + pos.y - text.style.font_size * text.style.line_height;
+                rects.push([x, y, pos.w, line_height]);
+            }
+        }
+        Some(rects)
     }
 }

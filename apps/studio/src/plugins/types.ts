@@ -11,6 +11,8 @@ export interface ToolContext {
 export interface PluginPointerEvent {
   x: number;
   y: number;
+  /** PointerEvent.button: 0=primary, 1=auxiliary, 2=secondary */
+  button: number;
   /** Original DOM event for shift/alt/meta key state */
   shiftKey: boolean;
   altKey: boolean;
@@ -21,6 +23,8 @@ export interface PluginPointerEvent {
 /** Result from a tool's pointer handler */
 export type ToolResult =
   | { action: "addNode"; id: number }
+  | { action: "removeNode"; id: number }
+  | { action: "removeEdge"; id: number }
   | { action: "moveNode"; id: number; x: number; y: number }
   | { action: "addEdge"; a: number; b: number }
   | { action: "select"; id: number | null }

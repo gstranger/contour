@@ -169,21 +169,28 @@
     </div>
 
     <script type="module">
-      import init, { Graph } from "../pkg/contour_wasm.js";
+      import init, { Graph } from "../npm/pkg/default/contour.js";
       await init();
       console.log('contour demo: wasm init ok');
+
+      const urlParams = new URLSearchParams(window.location.search);
+      const scopedStorageKey = urlParams.get('storageKey');
+      const storageKey = scopedStorageKey && scopedStorageKey.trim().length > 0
+        ? scopedStorageKey.trim()
+        : 'contour_doc';
+      const legacyStorageKey = 'vecnet_doc';
 
       const g = new Graph();
       // If saved doc exists, load it
       let loaded = false;
       try {
         // Prefer new key; fallback to legacy for backward compatibility
-        const savedNew = localStorage.getItem('contour_doc');
-        const savedOld = !savedNew ? localStorage.getItem('vecnet_doc') : null;
+        const savedNew = localStorage.getItem(storageKey);
+        const savedOld = !savedNew ? localStorage.getItem(legacyStorageKey) : null;
         const saved = savedNew || savedOld;
         if (saved) { loaded = g.from_json(JSON.parse(saved)); }
         // Migrate legacy key to new key after successful load
-        if (loaded && savedOld) { try { localStorage.setItem('contour_doc', savedOld); } catch {} }
+        if (loaded && savedOld) { try { localStorage.setItem(storageKey, savedOld); } catch {} }
       } catch (e) { console.warn('Load failed', e); }
       // Start empty by default (no seeded geometry)
 
@@ -2422,12 +2429,12 @@
       document.getElementById('saveBtn').addEventListener('click', () => {
         try {
           const obj = g.to_json();
-          localStorage.setItem('contour_doc', JSON.stringify(obj));
+          localStorage.setItem(storageKey, JSON.stringify(obj));
         } catch (e) { console.warn('Save failed', e); }
       });
       document.getElementById('loadBtn').addEventListener('click', () => {
         try {
-          const saved = localStorage.getItem('contour_doc') || localStorage.getItem('vecnet_doc');
+          const saved = localStorage.getItem(storageKey) || localStorage.getItem(legacyStorageKey);
           if (saved) { g.from_json(JSON.parse(saved)); scheduleRegions(); render(); }
         } catch (e) { console.warn('Load failed', e); }
       });

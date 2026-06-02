@@ -1,0 +1,411 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap");
+
+:root {
+  --bg: #f0f6f4;
+  --bg-accent: radial-gradient(circle at 10% 0%, #d8efe6 0%, #f0f6f4 45%);
+  --surface: #ffffff;
+  --surface-soft: #f4faf8;
+  --text: #12342e;
+  --muted: #4c6c66;
+  --brand: #136c5d;
+  --brand-strong: #0d5448;
+  --warm: #f38b2f;
+  --danger: #b94040;
+  --line: #c8ddd8;
+  --shadow: 0 14px 36px rgba(19, 108, 93, 0.14);
+  font-family: "Space Grotesk", "Avenir Next", "Trebuchet MS", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  color: var(--text);
+  background: var(--bg-accent);
+}
+
+a {
+  color: inherit;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.center-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  font-size: 1.1rem;
+}
+
+.page-enter {
+  animation: rise-in 240ms ease;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+}
+
+.auth-card {
+  width: min(440px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 1.5rem;
+  display: grid;
+  gap: 1rem;
+  box-shadow: var(--shadow);
+}
+
+.auth-card p {
+  color: var(--muted);
+}
+
+.auth-card form {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.auth-card label {
+  display: grid;
+  gap: 0.4rem;
+  font-weight: 500;
+}
+
+.auth-card input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.65rem 0.7rem;
+  background: var(--surface-soft);
+}
+
+.subtle-link {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 0.9rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(6px);
+}
+
+.brand {
+  text-decoration: none;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.nav-links {
+  display: flex;
+  gap: 0.8rem;
+}
+
+.nav-links a {
+  text-decoration: none;
+  color: var(--muted);
+  padding: 0.3rem 0.55rem;
+  border-radius: 8px;
+}
+
+.nav-links a.active {
+  color: var(--brand-strong);
+  background: rgba(19, 108, 93, 0.12);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.app-main {
+  padding: 1.2rem;
+}
+
+.pill {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.22rem 0.62rem;
+}
+
+.docs-page {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.docs-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-end;
+}
+
+.docs-header p {
+  color: var(--muted);
+}
+
+.doc-grid {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+}
+
+.doc-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.8rem;
+  box-shadow: var(--shadow);
+  animation: rise-in 220ms ease both;
+}
+
+.doc-card p {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.doc-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+}
+
+.doc-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.editor-page {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.full-workbench-page {
+  min-height: calc(100vh - 140px);
+  grid-template-rows: auto 1fr;
+}
+
+.editor-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.editor-title-group,
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.title-input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.48rem 0.62rem;
+  min-width: 220px;
+  background: rgba(255, 255, 255, 0.88);
+  font-weight: 600;
+}
+
+.editor-content {
+  min-height: min(72vh, 760px);
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 0.9rem;
+}
+
+.legacy-workbench-wrap {
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  min-height: min(80vh, 980px);
+}
+
+.legacy-workbench-frame {
+  border: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.canvas-wrap {
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.editor-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.editor-sidebar {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.editor-sidebar dl {
+  margin: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.editor-sidebar dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 0.25rem;
+}
+
+.editor-sidebar dt {
+  color: var(--muted);
+}
+
+.editor-sidebar dd {
+  margin: 0;
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.editor-sidebar ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--muted);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.loading-panel,
+.editor-error {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 16px;
+  min-height: 50vh;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 1.4rem;
+  box-shadow: var(--shadow);
+}
+
+.primary-button,
+.ghost-button,
+.danger-button,
+.primary-link {
+  border-radius: 10px;
+  border: 1px solid transparent;
+  padding: 0.52rem 0.82rem;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.primary-button,
+.primary-link {
+  background: var(--brand);
+  color: #f8fffd;
+}
+
+.primary-button:hover,
+.primary-link:hover {
+  background: var(--brand-strong);
+}
+
+.ghost-button {
+  background: rgba(19, 108, 93, 0.09);
+  color: var(--brand-strong);
+  border-color: rgba(19, 108, 93, 0.14);
+}
+
+.danger-button {
+  background: rgba(185, 64, 64, 0.1);
+  color: var(--danger);
+}
+
+.error-text {
+  color: var(--danger);
+  font-size: 0.92rem;
+}
+
+@media (max-width: 980px) {
+  .editor-content {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .canvas-wrap {
+    min-height: 56vh;
+  }
+
+  .editor-toolbar,
+  .docs-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .app-header {
+    flex-wrap: wrap;
+  }
+}

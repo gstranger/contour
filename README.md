@@ -82,6 +82,23 @@ python3 -m http.server
 
 Then open `http://localhost:8000/web/index.html`.
 
+## React Studio App
+
+A routed React frontend stack is available at `apps/studio` with:
+
+- typed Graph service over the WASM API
+- local document management
+- local auth/session flow
+- Canvas editor viewport
+
+Run:
+
+```bash
+cd apps/studio
+npm install
+npm run dev
+```
+
 Demo controls:
 - Import SVG: click "Import SVG" or drag-and-drop a `.svg` onto the canvas. The demo parses all `<path d>` commands (M/L/C/Z) and imports them into the graph.
 - Save/Load: persists the current graph to `localStorage`.

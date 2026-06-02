@@ -3427,7 +3427,7 @@ impl Graph {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.align = align;
             text.metrics_ver = text.metrics_ver.wrapping_add(1);
-            text.cached_metrics = None;
+            // Alignment only affects layout, not font metrics
             text.cached_layout = None;
             return true;
         }
@@ -3557,7 +3557,7 @@ impl Graph {
                 overflow: TextOverflow::Clip,
             };
             text.metrics_ver = text.metrics_ver.wrapping_add(1);
-            text.cached_metrics = None;
+            // TextType change invalidates layout but not font metrics
             text.cached_layout = None;
             return true;
         }
@@ -3588,7 +3588,7 @@ impl Graph {
                 start_offset: start_offset.clamp(0.0, 1.0),
             };
             text.metrics_ver = text.metrics_ver.wrapping_add(1);
-            text.cached_metrics = None;
+            // TextType change invalidates layout but not font metrics
             text.cached_layout = None;
             return true;
         }
@@ -3600,7 +3600,7 @@ impl Graph {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.text_type = TextType::Label;
             text.metrics_ver = text.metrics_ver.wrapping_add(1);
-            text.cached_metrics = None;
+            // TextType change invalidates layout but not font metrics
             text.cached_layout = None;
             return true;
         }
@@ -3623,7 +3623,7 @@ impl Graph {
                     overflow,
                 };
                 text.metrics_ver = text.metrics_ver.wrapping_add(1);
-                text.cached_metrics = None;
+                // Box size change invalidates layout but not font metrics
                 text.cached_layout = None;
                 return true;
             }
@@ -3648,7 +3648,7 @@ impl Graph {
                     overflow,
                 };
                 text.metrics_ver = text.metrics_ver.wrapping_add(1);
-                text.cached_metrics = None;
+                // Alignment only affects layout, not font metrics
                 text.cached_layout = None;
                 return true;
             }
@@ -3673,7 +3673,7 @@ impl Graph {
                     overflow,
                 };
                 text.metrics_ver = text.metrics_ver.wrapping_add(1);
-                text.cached_metrics = None;
+                // Overflow only affects layout, not font metrics
                 text.cached_layout = None;
                 return true;
             }
@@ -3691,7 +3691,7 @@ impl Graph {
                     start_offset: offset.clamp(0.0, 1.0),
                 };
                 text.metrics_ver = text.metrics_ver.wrapping_add(1);
-                text.cached_metrics = None;
+                // Offset only affects layout, not font metrics
                 text.cached_layout = None;
                 return true;
             }
@@ -3719,7 +3719,7 @@ impl Graph {
                     start_offset,
                 };
                 text.metrics_ver = text.metrics_ver.wrapping_add(1);
-                text.cached_metrics = None;
+                // Path change only affects layout, not font metrics
                 text.cached_layout = None;
                 return true;
             }

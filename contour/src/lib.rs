@@ -1,5 +1,6 @@
 pub mod layers;
 pub mod model;
+pub mod undo;
 pub mod geometry {
     pub mod arc;
     pub mod cubic;
@@ -115,6 +116,12 @@ pub struct Graph {
     pub(crate) flatten_index: RefCell<Option<crate::algorithms::regions::FlattenIndex>>,
     pub(crate) flatten_cache: RefCell<Option<crate::algorithms::regions::FlattenCache>>,
     pub(crate) incr_plan: RefCell<Option<crate::algorithms::incremental::IncrPlan>>,
+    // Undo/redo system
+    pub(crate) undo_stack: crate::undo::UndoStack,
+    pub(crate) redo_stack: crate::undo::UndoStack,
+    pub(crate) undo_group_depth: u32,
+    pub(crate) current_snapshot: Option<crate::undo::SnapshotBatch>,
+    pub(crate) current_undo_label: Option<String>,
 }
 
 pub struct EdgeArrays {
@@ -258,6 +265,11 @@ impl Graph {
             flatten_index: RefCell::new(None),
             flatten_cache: RefCell::new(None),
             incr_plan: RefCell::new(None),
+            undo_stack: crate::undo::UndoStack::new(),
+            redo_stack: crate::undo::UndoStack::new(),
+            undo_group_depth: 0,
+            current_snapshot: None,
+            current_undo_label: None,
         }
     }
     pub fn geom_version(&self) -> u64 {
@@ -2889,6 +2901,9 @@ impl Graph {
     pub fn set_text_content(&mut self, id: TextId, content: &str) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.content = content.to_string();
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2898,6 +2913,9 @@ impl Graph {
     pub fn set_text_position(&mut self, id: TextId, x: f32, y: f32) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.position = Vec2 { x, y };
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2907,6 +2925,9 @@ impl Graph {
     pub fn set_text_rotation(&mut self, id: TextId, radians: f32) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.rotation = radians;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2960,6 +2981,9 @@ impl Graph {
     pub fn set_text_align(&mut self, id: TextId, align: TextAlign) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.align = align;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2969,6 +2993,9 @@ impl Graph {
     pub fn set_text_style(&mut self, id: TextId, style: TextStyle) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style = style;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2979,6 +3006,9 @@ impl Graph {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.font_family = font_family.to_string();
             text.style.font_size = font_size;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2988,6 +3018,9 @@ impl Graph {
     pub fn set_text_font_weight(&mut self, id: TextId, weight: u16) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.font_weight = weight.clamp(100, 900);
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2997,6 +3030,9 @@ impl Graph {
     pub fn set_text_font_style(&mut self, id: TextId, style: FontStyle) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.font_style = style;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3006,6 +3042,9 @@ impl Graph {
     pub fn set_text_fill_color(&mut self, id: TextId, r: u8, g: u8, b: u8, a: u8) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.fill_color = Some(Color { r, g, b, a });
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3015,6 +3054,9 @@ impl Graph {
     pub fn clear_text_fill_color(&mut self, id: TextId) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.fill_color = None;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3024,6 +3066,9 @@ impl Graph {
     pub fn set_text_stroke_color(&mut self, id: TextId, r: u8, g: u8, b: u8, a: u8) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.stroke_color = Some(Color { r, g, b, a });
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3033,6 +3078,9 @@ impl Graph {
     pub fn set_text_stroke_width(&mut self, id: TextId, width: f32) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.stroke_width = width.max(0.0);
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3042,6 +3090,9 @@ impl Graph {
     pub fn set_text_letter_spacing(&mut self, id: TextId, spacing: f32) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.letter_spacing = spacing;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3051,6 +3102,9 @@ impl Graph {
     pub fn set_text_line_height(&mut self, id: TextId, line_height: f32) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.line_height = line_height.max(0.1);
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3065,6 +3119,9 @@ impl Graph {
                 vertical_align: VerticalAlign::Top,
                 overflow: TextOverflow::Clip,
             };
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3093,6 +3150,9 @@ impl Graph {
                 edge_ids,
                 start_offset: start_offset.clamp(0.0, 1.0),
             };
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3102,6 +3162,9 @@ impl Graph {
     pub fn convert_text_to_label(&mut self, id: TextId) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.text_type = TextType::Label;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3122,6 +3185,9 @@ impl Graph {
                     vertical_align,
                     overflow,
                 };
+                text.metrics_ver = text.metrics_ver.wrapping_add(1);
+                text.cached_metrics = None;
+                text.cached_layout = None;
                 return true;
             }
         }
@@ -3144,6 +3210,9 @@ impl Graph {
                     vertical_align: align,
                     overflow,
                 };
+                text.metrics_ver = text.metrics_ver.wrapping_add(1);
+                text.cached_metrics = None;
+                text.cached_layout = None;
                 return true;
             }
         }
@@ -3166,6 +3235,9 @@ impl Graph {
                     vertical_align,
                     overflow,
                 };
+                text.metrics_ver = text.metrics_ver.wrapping_add(1);
+                text.cached_metrics = None;
+                text.cached_layout = None;
                 return true;
             }
         }
@@ -3181,6 +3253,9 @@ impl Graph {
                     edge_ids,
                     start_offset: offset.clamp(0.0, 1.0),
                 };
+                text.metrics_ver = text.metrics_ver.wrapping_add(1);
+                text.cached_metrics = None;
+                text.cached_layout = None;
                 return true;
             }
         }
@@ -3206,6 +3281,9 @@ impl Graph {
                     edge_ids,
                     start_offset,
                 };
+                text.metrics_ver = text.metrics_ver.wrapping_add(1);
+                text.cached_metrics = None;
+                text.cached_layout = None;
                 return true;
             }
         }

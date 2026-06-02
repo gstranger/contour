@@ -499,6 +499,27 @@ pub struct TextCacheLayout {
     pub char_positions: Vec<TextCharPosition>,
 }
 
+/// Returned by `measure_text()`. Either cached metrics or a request for JS-side measurement.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct TextMeasureResult {
+    /// True if the caller should measure the text via a font provider
+    pub needs_measure: bool,
+    /// The text content to measure (valid when needs_measure is true, empty string otherwise)
+    pub content: String,
+    /// The text style (serialized; valid when needs_measure is true, defaults otherwise)
+    pub style: TextStyle,
+    /// Cached per-character widths (valid when needs_measure is false)
+    pub char_widths: Vec<f32>,
+    /// Cached line height (valid when needs_measure is false)
+    pub line_height: f32,
+    /// Cached ascent (valid when needs_measure is false)
+    pub ascent: f32,
+    /// Cached descent (valid when needs_measure is false)
+    pub descent: f32,
+    /// Cached total width (valid when needs_measure is false)
+    pub total_width: f32,
+}
+
 /// Glyph outline for text-to-outlines conversion
 /// (Provided by JavaScript via font parsing library)
 #[derive(Clone, Debug, Serialize, Deserialize)]

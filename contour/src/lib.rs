@@ -700,12 +700,22 @@ impl Graph {
         json::to_json_impl(self)
     }
     pub fn from_json_value(&mut self, v: serde_json::Value) -> bool {
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.undo_group_depth = 0;
+        self.current_snapshot = None;
+        self.current_undo_label = None;
         json::from_json_impl(self, v)
     }
     pub fn from_json_value_strict(
         &mut self,
         v: serde_json::Value,
     ) -> Result<bool, (&'static str, String)> {
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.undo_group_depth = 0;
+        self.current_snapshot = None;
+        self.current_undo_label = None;
         json::from_json_impl_strict(self, v)
     }
 
@@ -727,6 +737,11 @@ impl Graph {
         self.flatten_index.borrow_mut().take();
         self.flatten_cache.borrow_mut().take();
         self.incr_plan.borrow_mut().take();
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.undo_group_depth = 0;
+        self.current_snapshot = None;
+        self.current_undo_label = None;
         self.mark_full_dirty();
         self.bump();
     }
@@ -762,6 +777,7 @@ impl Graph {
         };
         if changed {
             self.mark_edge_endpoints_dirty(id, 12.0);
+            self.snapshot_edge(id);
             self.bump();
         }
         true
@@ -847,6 +863,7 @@ impl Graph {
         };
         if changed {
             self.mark_edge_endpoints_dirty(id, 12.0);
+            self.snapshot_edge(id);
             self.bump();
         }
         true
@@ -875,6 +892,7 @@ impl Graph {
         };
         if changed {
             self.mark_edge_endpoints_dirty(id, 12.0);
+            self.snapshot_edge(id);
             self.bump();
         }
         true
@@ -941,6 +959,7 @@ impl Graph {
         };
         if changed {
             self.mark_edge_endpoints_dirty(id, 12.0);
+            self.snapshot_edge(id);
             self.bump();
         }
         true
@@ -1036,6 +1055,7 @@ impl Graph {
         };
         if did_change {
             self.mark_edge_endpoints_dirty(id, 12.0);
+            self.snapshot_edge(id);
             self.bump();
         }
         true
@@ -1690,14 +1710,17 @@ impl Graph {
                 color: cur.color,
             },
         );
+        self.snapshot_fill(key);
         next
     }
     pub fn set_region_fill(&mut self, key: u32, filled: bool) {
         let color = self.fills.get(&key).and_then(|st| st.color);
+        self.snapshot_fill(key);
         self.fills.insert(key, FillState { filled, color });
     }
     pub fn set_region_color(&mut self, key: u32, r: u8, g: u8, b: u8, a: u8) {
         let filled = self.fills.get(&key).map(|st| st.filled).unwrap_or(true);
+        self.snapshot_fill(key);
         self.fills.insert(
             key,
             FillState {
@@ -1901,6 +1924,263 @@ impl Graph {
             }
         }
         false
+    }
+
+    /// Undo the last operation. Returns (label, depth_remaining) or None if empty.
+    pub fn undo(&mut self) -> Option<(String, usize)> {
+        if self.undo_group_depth > 0 {
+            return None;
+        }
+        let entry = self.undo_stack.pop()?;
+        let label = entry.label.clone();
+        let depth_remaining = self.undo_stack.len();
+
+        match &entry.action {
+            crate::undo::UndoAction::Command(cmd) => {
+                self.apply_command_reverse(cmd);
+            }
+            crate::undo::UndoAction::Snapshot(snapshot) => {
+                let redo_after = self.capture_snapshot_from(snapshot);
+                self.restore_snapshot(snapshot);
+                self.redo_stack.push(crate::undo::UndoEntry {
+                    label: label.clone(),
+                    action: crate::undo::UndoAction::Snapshot(redo_after),
+                });
+                self.geom_ver = self.geom_ver.wrapping_add(1);
+                self.dirty_reset();
+                return Some((label, depth_remaining));
+            }
+        }
+
+        self.redo_stack.push(entry);
+        self.geom_ver = self.geom_ver.wrapping_add(1);
+        self.dirty_reset();
+        Some((label, depth_remaining))
+    }
+
+    /// Redo the last undone operation. Returns (label, depth_remaining) or None if empty.
+    pub fn redo(&mut self) -> Option<(String, usize)> {
+        if self.undo_group_depth > 0 {
+            return None;
+        }
+        let entry = self.redo_stack.pop()?;
+        let label = entry.label.clone();
+        let depth_remaining = self.redo_stack.len();
+
+        match &entry.action {
+            crate::undo::UndoAction::Command(cmd) => {
+                self.apply_command_forward(cmd);
+            }
+            crate::undo::UndoAction::Snapshot(snapshot) => {
+                let undo_snapshot = self.capture_snapshot_from(snapshot);
+                self.restore_snapshot(snapshot);
+                self.undo_stack.push(crate::undo::UndoEntry {
+                    label: label.clone(),
+                    action: crate::undo::UndoAction::Snapshot(undo_snapshot),
+                });
+                self.geom_ver = self.geom_ver.wrapping_add(1);
+                self.dirty_reset();
+                return Some((label, depth_remaining));
+            }
+        }
+
+        self.undo_stack.push(entry);
+        self.geom_ver = self.geom_ver.wrapping_add(1);
+        self.dirty_reset();
+        Some((label, depth_remaining))
+    }
+
+    fn apply_command_reverse(&mut self, cmd: &crate::undo::UndoCommand) {
+        match cmd {
+            crate::undo::UndoCommand::AddNode { id, .. } => {
+                self.nodes[*id as usize] = None;
+                let mut to_remove: Vec<usize> = Vec::new();
+                for (eid, e) in self.edges.iter().enumerate() {
+                    if let Some(edge) = e {
+                        if edge.a == *id || edge.b == *id {
+                            to_remove.push(eid);
+                        }
+                    }
+                }
+                for eid in to_remove {
+                    self.edges[eid] = None;
+                }
+            }
+            crate::undo::UndoCommand::RemoveNode { id, pos, incident } => {
+                if (*id as usize) >= self.nodes.len() {
+                    self.nodes.resize(*id as usize + 1, None);
+                }
+                self.nodes[*id as usize] = Some(Node { x: pos.0, y: pos.1 });
+                for (eid, edge) in incident {
+                    if (*eid as usize) >= self.edges.len() {
+                        self.edges.resize(*eid as usize + 1, None);
+                    }
+                    self.edges[*eid as usize] = Some(edge.clone());
+                }
+            }
+            crate::undo::UndoCommand::AddEdge { id, .. } => {
+                self.edges[*id as usize] = None;
+            }
+            crate::undo::UndoCommand::RemoveEdge { id, endpoint_a: _, endpoint_b: _, edge } => {
+                if (*id as usize) >= self.edges.len() {
+                    self.edges.resize(*id as usize + 1, None);
+                }
+                self.edges[*id as usize] = Some(edge.clone());
+            }
+            crate::undo::UndoCommand::AddShape { id, .. } => {
+                if (*id as usize) < self.shapes.len() {
+                    self.shapes[*id as usize] = None;
+                }
+            }
+            crate::undo::UndoCommand::RemoveShape { id, shape } => {
+                if (*id as usize) >= self.shapes.len() {
+                    self.shapes.resize(*id as usize + 1, None);
+                }
+                self.shapes[*id as usize] = Some(shape.clone());
+            }
+            crate::undo::UndoCommand::AddText { id, .. } => {
+                if (*id as usize) < self.texts.len() {
+                    self.texts[*id as usize] = None;
+                }
+            }
+            crate::undo::UndoCommand::RemoveText { id, text } => {
+                if (*id as usize) >= self.texts.len() {
+                    self.texts.resize(*id as usize + 1, None);
+                }
+                self.texts[*id as usize] = Some(text.clone());
+            }
+        }
+    }
+
+    fn apply_command_forward(&mut self, cmd: &crate::undo::UndoCommand) {
+        match cmd {
+            crate::undo::UndoCommand::AddNode { id, pos } => {
+                if (*id as usize) >= self.nodes.len() {
+                    self.nodes.resize(*id as usize + 1, None);
+                }
+                self.nodes[*id as usize] = Some(Node { x: pos.0, y: pos.1 });
+            }
+            crate::undo::UndoCommand::RemoveNode { id, .. } => {
+                self.nodes[*id as usize] = None;
+                let mut to_remove: Vec<usize> = Vec::new();
+                for (eid, e) in self.edges.iter().enumerate() {
+                    if let Some(edge) = e {
+                        if edge.a == *id || edge.b == *id {
+                            to_remove.push(eid);
+                        }
+                    }
+                }
+                for eid in to_remove {
+                    self.edges[eid] = None;
+                }
+            }
+            crate::undo::UndoCommand::AddEdge { id, a: _, b: _, edge } => {
+                if (*id as usize) >= self.edges.len() {
+                    self.edges.resize(*id as usize + 1, None);
+                }
+                self.edges[*id as usize] = Some(edge.clone());
+            }
+            crate::undo::UndoCommand::RemoveEdge { id, .. } => {
+                if (*id as usize) < self.edges.len() {
+                    self.edges[*id as usize] = None;
+                }
+            }
+            crate::undo::UndoCommand::AddShape { id, shape } => {
+                if (*id as usize) >= self.shapes.len() {
+                    self.shapes.resize(*id as usize + 1, None);
+                }
+                self.shapes[*id as usize] = Some(shape.clone());
+            }
+            crate::undo::UndoCommand::RemoveShape { id, .. } => {
+                if (*id as usize) < self.shapes.len() {
+                    self.shapes[*id as usize] = None;
+                }
+            }
+            crate::undo::UndoCommand::AddText { id, text } => {
+                if (*id as usize) >= self.texts.len() {
+                    self.texts.resize(*id as usize + 1, None);
+                }
+                self.texts[*id as usize] = Some(text.clone());
+            }
+            crate::undo::UndoCommand::RemoveText { id, .. } => {
+                if (*id as usize) < self.texts.len() {
+                    self.texts[*id as usize] = None;
+                }
+            }
+        }
+    }
+
+    fn capture_snapshot_from(&self, source: &crate::undo::SnapshotBatch) -> crate::undo::SnapshotBatch {
+        let mut snap = crate::undo::SnapshotBatch::new();
+        for &(id, _) in &source.nodes {
+            let state = self.nodes.get(id as usize).and_then(|n| *n);
+            snap.nodes.push((id, state));
+        }
+        for &(id, _) in &source.edges {
+            let state = self.edges.get(id as usize).and_then(|e| e.clone());
+            snap.edges.push((id, state));
+        }
+        for &(key, _) in &source.fills {
+            let state = self.fills.get(&key).copied();
+            snap.fills.push((key, state));
+        }
+        for &(id, _) in &source.shapes {
+            let state = self.shapes.get(id as usize).and_then(|s| s.clone());
+            snap.shapes.push((id, state));
+        }
+        for &(id, _) in &source.texts {
+            let state = self.texts.get(id as usize).and_then(|t| t.clone());
+            snap.texts.push((id, state));
+        }
+        snap
+    }
+
+    fn restore_snapshot(&mut self, snapshot: &crate::undo::SnapshotBatch) {
+        for &(id, state) in &snapshot.nodes {
+            if (id as usize) < self.nodes.len() {
+                self.nodes[id as usize] = state;
+            } else if state.is_some() {
+                self.nodes.resize(id as usize + 1, None);
+                self.nodes[id as usize] = state;
+            }
+        }
+        for &(id, ref state) in &snapshot.edges {
+            if (id as usize) < self.edges.len() {
+                self.edges[id as usize] = state.clone();
+            } else if state.is_some() {
+                self.edges.resize(id as usize + 1, None);
+                self.edges[id as usize] = state.clone();
+            }
+        }
+        for &(key, state) in &snapshot.fills {
+            if let Some(st) = state {
+                self.fills.insert(key, st);
+            } else {
+                self.fills.remove(&key);
+            }
+        }
+        for &(id, ref state) in &snapshot.shapes {
+            if (id as usize) < self.shapes.len() {
+                self.shapes[id as usize] = state.clone();
+            } else if state.is_some() {
+                self.shapes.resize(id as usize + 1, None);
+                self.shapes[id as usize] = state.clone();
+            }
+        }
+        for &(id, ref state) in &snapshot.texts {
+            if (id as usize) < self.texts.len() {
+                self.texts[id as usize] = state.clone();
+            } else if state.is_some() {
+                self.texts.resize(id as usize + 1, None);
+                self.texts[id as usize] = state.clone();
+            }
+        }
+        self.region_cache.borrow_mut().take();
+        self.flatten_index.borrow_mut().take();
+        self.flatten_cache.borrow_mut().take();
+        self.incr_plan.borrow_mut().take();
+        self.pick_index.borrow_mut().take();
+        self.mark_full_dirty();
     }
 }
 
@@ -3073,7 +3353,7 @@ impl Graph {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.position = Vec2 { x, y };
             text.metrics_ver = text.metrics_ver.wrapping_add(1);
-            text.cached_metrics = None;
+            // Position only invalidates layout, not font metrics
             text.cached_layout = None;
             return true;
         }
@@ -3085,7 +3365,7 @@ impl Graph {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.rotation = radians;
             text.metrics_ver = text.metrics_ver.wrapping_add(1);
-            text.cached_metrics = None;
+            // Rotation only invalidates layout, not font metrics
             text.cached_layout = None;
             return true;
         }
@@ -3106,7 +3386,7 @@ impl Graph {
             text.position.y = cy + dx * sin_a + dy * cos_a;
             text.rotation += angle;
             text.metrics_ver = text.metrics_ver.wrapping_add(1);
-            text.cached_metrics = None;
+            // Position/rotation only invalidates layout, not font metrics
             text.cached_layout = None;
             return true;
         }
@@ -3208,8 +3488,6 @@ impl Graph {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.fill_color = Some(Color { r, g, b, a });
             text.metrics_ver = text.metrics_ver.wrapping_add(1);
-            text.cached_metrics = None;
-            text.cached_layout = None;
             return true;
         }
         false
@@ -3220,8 +3498,6 @@ impl Graph {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.fill_color = None;
             text.metrics_ver = text.metrics_ver.wrapping_add(1);
-            text.cached_metrics = None;
-            text.cached_layout = None;
             return true;
         }
         false
@@ -3232,8 +3508,6 @@ impl Graph {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.stroke_color = Some(Color { r, g, b, a });
             text.metrics_ver = text.metrics_ver.wrapping_add(1);
-            text.cached_metrics = None;
-            text.cached_layout = None;
             return true;
         }
         false
@@ -3244,8 +3518,6 @@ impl Graph {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.stroke_width = width.max(0.0);
             text.metrics_ver = text.metrics_ver.wrapping_add(1);
-            text.cached_metrics = None;
-            text.cached_layout = None;
             return true;
         }
         false

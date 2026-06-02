@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createGraphService, type GraphService } from "../../services/graph/graphService";
-import type { GraphSnapshot, GraphPick } from "../../services/graph/types";
-import type { ToolContext } from "../../services/graph/types";
+import type { GraphSnapshot, GraphPick, ToolContext } from "../../services/graph/types";
 
 export function useGraphEditor() {
   const [service, setService] = useState<GraphService | null>(null);

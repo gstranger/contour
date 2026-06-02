@@ -1,6 +1,6 @@
 // apps/studio/src/plugins/builtin/grid-snap.ts
 
-import type { ToolPlugin, ToolContext, PluginPointerEvent, ToolResult } from "../types";
+import type { ToolPlugin, PluginPointerEvent, ToolResult } from "../types";
 
 const DEFAULT_GRID_SIZE = 20;
 const GRID_COLOR = "rgba(16, 94, 66, 0.08)";
@@ -54,7 +54,7 @@ export function createGridSnapPlugin(): ToolPlugin {
       // It only clears on next activate (toggle off).
     },
 
-    onPointerDown(event: PluginPointerEvent): ToolResult {
+    onPointerDown(_event: PluginPointerEvent): ToolResult {
       // Grid snap is a pass-through: it doesn't consume pointer events.
       // Other tools check the grid state and snap coordinates.
       return { action: "repaint" };

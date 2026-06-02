@@ -52,5 +52,14 @@ export declare class Graph {
   get_polyline_points_res(id: number): Result<Float32Array>;
   add_svg_path_res(d: string): Result<number>;
   to_svg_paths_res(): Result<string[]>;
+  // Undo/redo
+  begin_undo_group_res(label: string): Result<boolean>;
+  end_undo_group_res(): Result<{ committed: boolean; depth_was_zero: boolean }>;
+  undo_res(): Result<{ label: string; depth_remaining: number }>;
+  redo_res(): Result<{ label: string; depth_remaining: number }>;
+  can_undo_res(): Result<boolean>;
+  can_redo_res(): Result<boolean>;
+  undo_clear_res(): Result<boolean>;
+  undo_depth_res(): Result<{ undo: number; redo: number }>;
 }
 

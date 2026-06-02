@@ -166,4 +166,4 @@ function createShapeTool(mode: ShapeMode, name: string, shortcut: string): ToolP
 
 export const rectangleTool = createShapeTool("rectangle", "Rectangle", "U");
 export const ellipseTool = createShapeTool("ellipse", "Ellipse", "O");
-export const polygonTool = createShapeTool("polygon", "Polygon", "G");
+export const polygonTool = createShapeTool("polygon", "Polygon", "");

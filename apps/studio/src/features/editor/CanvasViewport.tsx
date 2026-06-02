@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, type MouseEvent, type PointerEvent, type RefObject } from "react";
 import type { GraphService } from "../../services/graph/graphService";
-import type { GraphSnapshot, GraphPick } from "../../services/graph/types";
+import type { GraphSnapshot } from "../../services/graph/types";
 import type { PluginHost } from "../../plugins/PluginHost";
 import type { PluginPointerEvent, ToolEntry, ToolContext } from "../../plugins/types";
 import { snapToGrid } from "../../plugins/builtin/grid-snap";

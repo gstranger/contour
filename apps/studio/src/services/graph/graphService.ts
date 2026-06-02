@@ -14,7 +14,7 @@ let wasmInitPromise: Promise<void> | null = null;
 
 function ensureWasmReady(): Promise<void> {
   if (!wasmInitPromise) {
-    wasmInitPromise = initWasm().then(() => undefined);
+    wasmInitPromise = initWasm().then(() => { /* ready */ });
   }
   return wasmInitPromise;
 }

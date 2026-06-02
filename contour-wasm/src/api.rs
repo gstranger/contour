@@ -2982,3 +2982,88 @@ fn parse_glyph_data(data: &JsValue) -> Vec<contour::model::GlyphOutline> {
         })
         .collect()
 }
+
+// --- Undo/Redo WASM API ---
+
+#[wasm_bindgen]
+impl Graph {
+    pub fn begin_undo_group_res(&mut self, label: &str) -> JsValue {
+        self.rs_begin_undo_group(label.to_string());
+        error::ok(JsValue::from_bool(true))
+    }
+
+    pub fn end_undo_group_res(&mut self) -> JsValue {
+        let committed = self.rs_end_undo_group();
+        let obj = crate::interop::new_obj();
+        crate::interop::set_kv(&obj, "committed", &JsValue::from_bool(committed));
+        crate::interop::set_kv(&obj, "depth_was_zero", &JsValue::from_bool(false));
+        error::ok(obj.into())
+    }
+
+    pub fn undo_res(&mut self) -> JsValue {
+        if self.inner.is_undo_group_open() {
+            return error::err(
+                "undo_in_progress",
+                "cannot undo while a gesture group is open",
+                None,
+            );
+        }
+        match self.rs_undo() {
+            Some((label, remaining)) => {
+                let obj = crate::interop::new_obj();
+                crate::interop::set_kv(&obj, "label", &JsValue::from_str(&label));
+                crate::interop::set_kv(
+                    &obj,
+                    "depth_remaining",
+                    &JsValue::from_f64(remaining as f64),
+                );
+                error::ok(obj.into())
+            }
+            None => error::err("undo_empty", "nothing to undo", None),
+        }
+    }
+
+    pub fn redo_res(&mut self) -> JsValue {
+        if self.inner.is_undo_group_open() {
+            return error::err(
+                "undo_in_progress",
+                "cannot redo while a gesture group is open",
+                None,
+            );
+        }
+        match self.rs_redo() {
+            Some((label, remaining)) => {
+                let obj = crate::interop::new_obj();
+                crate::interop::set_kv(&obj, "label", &JsValue::from_str(&label));
+                crate::interop::set_kv(
+                    &obj,
+                    "depth_remaining",
+                    &JsValue::from_f64(remaining as f64),
+                );
+                error::ok(obj.into())
+            }
+            None => error::err("redo_empty", "nothing to redo", None),
+        }
+    }
+
+    pub fn can_undo_res(&self) -> JsValue {
+        error::ok(JsValue::from_bool(self.inner.can_undo()))
+    }
+
+    pub fn can_redo_res(&self) -> JsValue {
+        error::ok(JsValue::from_bool(self.inner.can_redo()))
+    }
+
+    pub fn undo_clear_res(&mut self) -> JsValue {
+        self.rs_undo_clear();
+        error::ok(JsValue::from_bool(true))
+    }
+
+    pub fn undo_depth_res(&self) -> JsValue {
+        let (undo, redo) = self.rs_undo_depth();
+        let obj = crate::interop::new_obj();
+        crate::interop::set_kv(&obj, "undo", &JsValue::from_f64(undo as f64));
+        crate::interop::set_kv(&obj, "redo", &JsValue::from_f64(redo as f64));
+        error::ok(obj.into())
+    }
+}

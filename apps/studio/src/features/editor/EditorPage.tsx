@@ -1,6 +1,6 @@
 // apps/studio/src/features/editor/EditorPage.tsx
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { documentRepository } from "../../app/services";
 import { useAuth } from "../auth/useAuth";

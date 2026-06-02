@@ -3916,8 +3916,7 @@ impl Graph {
     pub fn get_text_selection_bounds(&self, id: TextId, start: u32, end: u32) -> Option<Vec<[f32; 4]>> {
         let text = self.texts.get(id as usize)?.as_ref()?;
         let layout = text.cached_layout.as_ref()?;
-        let start = start.min(end);
-        let end = end.max(start);
+        let (start, end) = (start.min(end), start.max(end));
 
         let line_height = text.cached_metrics.as_ref()
             .map(|m| m.line_height)

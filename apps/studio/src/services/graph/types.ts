@@ -1,4 +1,4 @@
-import type { GraphDocument, PickResult, RegionData } from "vecnet-wasm";
+import type { GraphDocument } from "vecnet-wasm";
 
 export type EdgeKind = "line" | "cubic" | "polyline";
 
@@ -30,23 +30,34 @@ export interface GraphRegionView {
   key: number;
   area: number;
   filled: boolean;
-  color: RegionData["color"];
+  color?: [number, number, number, number];
   points: number[];
 }
 
 export interface GraphSnapshot {
-  geomVersion: bigint;
+  geomVersion: number;
   nodes: GraphNodeView[];
   edges: GraphEdgeView[];
   regions: GraphRegionView[];
 }
 
 export type GraphDocumentPayload = GraphDocument;
-export type GraphPick = PickResult;
+
+/** Pick result from canvas picking */
+export type GraphPick = { kind: "node"; id: number; dist: number }
+  | { kind: "edge"; id: number; t: number; dist: number }
+  | { kind: "handle"; edge: number; end: number; dist: number }
+  | null;
 
 export interface BBox {
   x: number;
   y: number;
   width: number;
   height: number;
+}
+
+/** Context passed to tool plugins */
+export interface ToolContext {
+  service: import("../graph/graphService").GraphService;
+  snapshot: GraphSnapshot;
 }

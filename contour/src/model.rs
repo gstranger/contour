@@ -406,6 +406,14 @@ pub struct TextElement {
     pub align: TextAlign,
     /// Type of text (label, box, or on-path)
     pub text_type: TextType,
+    /// Metrics version: incremented when content or styling changes
+    pub metrics_ver: u64,
+    /// Cached font measurements (not serialized)
+    #[serde(skip)]
+    pub cached_metrics: Option<TextMetrics>,
+    /// Cached layout from TextMetrics + TextType (not serialized)
+    #[serde(skip)]
+    pub cached_layout: Option<TextCacheLayout>,
 }
 
 impl TextElement {
@@ -419,6 +427,9 @@ impl TextElement {
             style: TextStyle::default(),
             align: TextAlign::Left,
             text_type: TextType::Label,
+            metrics_ver: 0,
+            cached_metrics: None,
+            cached_layout: None,
         }
     }
 
@@ -437,6 +448,9 @@ impl TextElement {
                 vertical_align: VerticalAlign::Top,
                 overflow: TextOverflow::Clip,
             },
+            metrics_ver: 0,
+            cached_metrics: None,
+            cached_layout: None,
         }
     }
 
@@ -453,8 +467,36 @@ impl TextElement {
                 edge_ids,
                 start_offset: 0.0,
             },
+            metrics_ver: 0,
+            cached_metrics: None,
+            cached_layout: None,
         }
     }
+}
+
+/// Position of one character within its text element.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct TextCharPosition {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub char_index: u32,
+}
+
+/// Text measurement result from an external font provider.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct TextMetrics {
+    pub char_widths: Vec<f32>,
+    pub line_height: f32,
+    pub ascent: f32,
+    pub descent: f32,
+    pub total_width: f32,
+}
+
+/// Layout computed from TextMetrics + TextType.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct TextCacheLayout {
+    pub char_positions: Vec<TextCharPosition>,
 }
 
 /// Glyph outline for text-to-outlines conversion

@@ -1,12 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// apps/studio/src/features/editor/EditorPage.tsx
+
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { documentRepository } from "../../app/services";
 import { useAuth } from "../auth/useAuth";
+import { useGraphEditor } from "./useGraphEditor";
+import { CanvasViewport } from "./CanvasViewport";
+import { EditorToolbar } from "./EditorToolbar";
+import { EditorSidebar } from "./EditorSidebar";
+import { useActiveTool, usePluginTools } from "../../plugins/hooks";
 import type { DocumentMeta } from "../docs/types";
-import type { GraphDocument } from "vecnet-wasm";
 
-const normalizedRepoRoot = __REPO_ROOT__.replaceAll("\\", "/");
-const legacyWorkbenchBase = `/@fs${normalizedRepoRoot}/web/index.html`;
+function getPluginHost(): import("../../plugins/PluginHost").PluginHost {
+  return (window as any).__pluginHost;
+}
 
 export function EditorPage() {
   const { user } = useAuth();
@@ -17,28 +24,33 @@ export function EditorPage() {
   const [titleDraft, setTitleDraft] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState("Ready");
-  const [error, setError] = useState<string | null>(null);
 
-  const lastSavedRawRef = useRef<string | null>(null);
+  const {
+    service,
+    snapshot,
+    error,
+    context,
+    canvasRef,
+    selectedNodeId,
+    setSelectedNodeId,
+    edgeStartNodeId,
+    setEdgeStartNodeId,
+  } = useGraphEditor();
 
-  const storageKey = useMemo(() => {
-    if (!user || !docId) {
-      return null;
-    }
-    return `studio:workbench:${user.id}:${docId}`;
-  }, [user, docId]);
+  const host = getPluginHost();
+  const tools = usePluginTools(host);
+  const activeTool = useActiveTool(host, context);
 
-  const workbenchUrl = useMemo(() => {
-    if (!storageKey) {
-      return null;
-    }
-    return `${legacyWorkbenchBase}?storageKey=${encodeURIComponent(storageKey)}`;
-  }, [storageKey]);
-
+  // Expose snapshot/service to host for export plugins
   useEffect(() => {
-    if (!user || !docId || !storageKey) {
-      return;
-    }
+    const h = host as any;
+    h._lastSnapshot = snapshot;
+    h._lastService = service;
+  }, [host, snapshot, service]);
+
+  // Load document from repository into the graph service
+  useEffect(() => {
+    if (!user || !docId || !service) return;
 
     const stored = documentRepository.get(user.id, docId);
     if (!stored) {
@@ -46,149 +58,140 @@ export function EditorPage() {
       return;
     }
 
-    setError(null);
     setDocMeta(stored.meta);
     setTitleDraft(stored.meta.title);
 
-    const existing = localStorage.getItem(storageKey);
-    if (!existing) {
-      const payload = JSON.stringify(stored.graph);
-      localStorage.setItem(storageKey, payload);
-      lastSavedRawRef.current = payload;
-    } else {
-      lastSavedRawRef.current = existing;
+    try {
+      service.importDocument(stored.graph);
+    } catch (err) {
+      console.error("Failed to load document:", err);
     }
-  }, [docId, navigate, storageKey, user]);
+  }, [docId, navigate, user, service]);
 
+  // Save
   const saveNow = useCallback(() => {
-    if (!user || !docMeta || !storageKey) {
-      return;
-    }
-
+    if (!user || !docMeta || !service) return;
     setIsSaving(true);
     try {
-      const raw = localStorage.getItem(storageKey);
-      if (!raw) {
-        setStatus("No workbench state to save");
-        return;
-      }
-
-      const parsed = JSON.parse(raw) as GraphDocument;
-      const updated = documentRepository.saveGraph(user.id, docMeta.id, parsed);
+      const payload = service.exportDocument();
+      const updated = documentRepository.saveGraph(user.id, docMeta.id, payload);
       if (!updated) {
-        setError("Could not save document.");
+        setStatus("Could not save document.");
         return;
       }
-
       setDocMeta(updated);
       setTitleDraft(updated.title);
       setStatus(`Saved at ${new Date(updated.updatedAt).toLocaleTimeString()}`);
-      lastSavedRawRef.current = raw;
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Save failed.");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Save failed.");
     } finally {
       setIsSaving(false);
     }
-  }, [docMeta, storageKey, user]);
+  }, [docMeta, service, user]);
 
+  // Autosave
   useEffect(() => {
-    if (!user || !docMeta || !storageKey) {
-      return;
-    }
-
+    if (!user || !docMeta || !service) return;
     const timer = window.setInterval(() => {
-      const raw = localStorage.getItem(storageKey);
-      if (!raw || raw === lastSavedRawRef.current) {
-        return;
-      }
-
       try {
-        const parsed = JSON.parse(raw) as GraphDocument;
-        const updated = documentRepository.saveGraph(user.id, docMeta.id, parsed);
+        const payload = service.exportDocument();
+        const updated = documentRepository.saveGraph(user.id, docMeta.id, payload);
         if (updated) {
           setDocMeta(updated);
-          lastSavedRawRef.current = raw;
-          setStatus(`Autosaved at ${new Date(updated.updatedAt).toLocaleTimeString()}`);
         }
       } catch {
-        setStatus("Autosave paused (invalid JSON payload)");
+        // Silently skip autosave errors
       }
-    }, 1200);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [docMeta, storageKey, user]);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [docMeta, service, user]);
 
   const onTitleCommit = () => {
-    if (!user || !docMeta) {
-      return;
-    }
-
+    if (!user || !docMeta) return;
     const normalized = titleDraft.trim();
     if (!normalized || normalized === docMeta.title) {
       setTitleDraft(docMeta.title);
       return;
     }
-
     const renamed = documentRepository.rename(user.id, docMeta.id, normalized);
     if (renamed) {
       setDocMeta(renamed);
-      setStatus(`Renamed at ${new Date(renamed.updatedAt).toLocaleTimeString()}`);
+      setStatus("Renamed");
     }
+  };
+
+  const handleActivateTool = useCallback((toolId: string) => {
+    host.activateTool(toolId);
+  }, [host]);
+
+  const handleClear = () => {
+    if (!service) return;
+    service.clear();
+    setSelectedNodeId(null);
+    setEdgeStartNodeId(null);
   };
 
   if (error) {
     return (
       <section className="editor-page">
         <article className="editor-error">
-          <h1>Could not open document</h1>
+          <h1>Could not open editor</h1>
           <p>{error}</p>
-          <Link className="primary-link" to="/app/docs">
-            Back to documents
-          </Link>
+          <Link className="primary-link" to="/app/docs">Back to documents</Link>
         </article>
       </section>
     );
   }
 
-  if (!docMeta || !workbenchUrl) {
-    return <section className="editor-page loading-panel">Loading workbench...</section>;
+  if (!docMeta || !service || !snapshot) {
+    return <section className="editor-page loading-panel">Loading editor...</section>;
   }
 
   return (
-    <section className="editor-page page-enter full-workbench-page">
-      <header className="editor-toolbar">
-        <div className="editor-title-group">
-          <Link className="ghost-button" to="/app/docs">
-            Back
-          </Link>
-          <input
-            className="title-input"
-            value={titleDraft}
-            onChange={(event) => setTitleDraft(event.target.value)}
-            onBlur={onTitleCommit}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.currentTarget.blur();
-              }
-            }}
+    <section className="editor-page page-enter">
+      <EditorToolbar
+        host={host}
+        activeToolId={host.getActiveToolId() ?? "select"}
+        tools={tools}
+        onActivateTool={handleActivateTool}
+      />
+
+      <div className="editor-content">
+        <div className="canvas-wrap">
+          <CanvasViewport
+            canvasRef={canvasRef}
+            service={service}
+            snapshot={snapshot}
+            host={host}
+            activeTool={activeTool}
+            context={context}
+            selectedNodeId={selectedNodeId}
+            edgeStartNodeId={edgeStartNodeId}
+            onSelectNode={setSelectedNodeId}
+            onEdgeStartNodeChange={setEdgeStartNodeId}
           />
         </div>
-        <div className="editor-actions">
-          <span className="pill">{status}</span>
-          <button className="primary-button" type="button" onClick={saveNow}>
-            {isSaving ? "Saving..." : "Save to Docs"}
-          </button>
-        </div>
-      </header>
 
-      <div className="legacy-workbench-wrap">
-        <iframe
-          title="Vecnet Legacy Workbench"
-          className="legacy-workbench-frame"
-          src={workbenchUrl}
+        <EditorSidebar
+          snapshot={snapshot}
+          selectedNodeId={selectedNodeId}
+          onClear={handleClear}
         />
+      </div>
+
+      <div className="editor-actions-bar">
+        <input
+          className="title-input"
+          value={titleDraft}
+          onChange={(e) => setTitleDraft(e.target.value)}
+          onBlur={onTitleCommit}
+          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+        />
+        <span className="pill">{status}</span>
+        <button className="primary-button" onClick={saveNow} disabled={isSaving}>
+          {isSaving ? "Saving..." : "Save"}
+        </button>
+        <Link className="ghost-button" to="/app/docs">Documents</Link>
       </div>
     </section>
   );

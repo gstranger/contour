@@ -409,3 +409,77 @@ button {
     flex-wrap: wrap;
   }
 }
+
+/* ── Toolbar (plugin SDK) ── */
+.toolbar-group {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.tool-button {
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+  white-space: nowrap;
+}
+
+.tool-button:hover {
+  background: rgba(19, 108, 93, 0.1);
+  border-color: var(--brand);
+}
+
+.tool-button--active {
+  background: var(--brand);
+  color: #fff;
+  border-color: var(--brand-strong);
+}
+
+/* ── Sidebar additions ── */
+.selection-info h3 {
+  font-size: 0.9rem;
+  margin-bottom: 0.4rem;
+  color: var(--brand-strong);
+}
+
+.selection-info dl {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.selection-info dl div {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 0.15rem;
+}
+
+.selection-info dt {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.selection-info dd {
+  margin: 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.82rem;
+}
+
+.sidebar-actions {
+  margin-top: 0.6rem;
+}
+
+.editor-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.5rem 0;
+  flex-wrap: wrap;
+}

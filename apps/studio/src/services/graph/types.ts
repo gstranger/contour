@@ -43,3 +43,10 @@ export interface GraphSnapshot {
 
 export type GraphDocumentPayload = GraphDocument;
 export type GraphPick = PickResult;
+
+export interface BBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}

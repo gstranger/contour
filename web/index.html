@@ -168,22 +168,50 @@
       </aside>
     </div>
 
+    <script src="https://unpkg.com/opentype.js@1.3.4/dist/opentype.min.js"></script>
     <script type="module">
-      import init, { Graph } from "../pkg/contour_wasm.js";
+      import init, { Graph } from "../npm/pkg/default/contour.js";
+      import { FontManager, FontProvider } from './font-provider.js';
+      import { TextEditor } from './text-editor.js';
       await init();
       console.log('contour demo: wasm init ok');
 
+      const urlParams = new URLSearchParams(window.location.search);
+      const scopedStorageKey = urlParams.get('storageKey');
+      const storageKey = scopedStorageKey && scopedStorageKey.trim().length > 0
+        ? scopedStorageKey.trim()
+        : 'contour_doc';
+      const legacyStorageKey = 'vecnet_doc';
+
       const g = new Graph();
+
+      const fontManager = new FontManager();
+      const fontProvider = new FontProvider(fontManager);
+      const textEditor = new TextEditor(g, fontProvider);
+
+      // Load a default font
+      (async () => {
+        try {
+          const resp = await fetch('https://cdn.jsdelivr.net/npm/@fontsource/inter@5.0.18/files/inter-latin-400-normal.woff');
+          const buf = await resp.arrayBuffer();
+          await fontManager.load('Inter', buf, 400, 'normal');
+          fontManager.setFallbackChain(['Inter', 'sans-serif']);
+          console.log('contour: default font loaded');
+        } catch (e) {
+          console.warn('contour: could not load default font, using browser fallback', e);
+        }
+      })();
+
       // If saved doc exists, load it
       let loaded = false;
       try {
         // Prefer new key; fallback to legacy for backward compatibility
-        const savedNew = localStorage.getItem('contour_doc');
-        const savedOld = !savedNew ? localStorage.getItem('vecnet_doc') : null;
+        const savedNew = localStorage.getItem(storageKey);
+        const savedOld = !savedNew ? localStorage.getItem(legacyStorageKey) : null;
         const saved = savedNew || savedOld;
         if (saved) { loaded = g.from_json(JSON.parse(saved)); }
         // Migrate legacy key to new key after successful load
-        if (loaded && savedOld) { try { localStorage.setItem('contour_doc', savedOld); } catch {} }
+        if (loaded && savedOld) { try { localStorage.setItem(storageKey, savedOld); } catch {} }
       } catch (e) { console.warn('Load failed', e); }
       // Start empty by default (no seeded geometry)
 
@@ -244,10 +272,12 @@
       }
       function updateModeLabel() {
         let mode = 'Select/Drag';
-        if (state.pen) mode = 'Pen' + (state.penMode === 'free' ? ' (Free)' : '');
+        if (textEditor.state === 'editing') mode = 'Editing Text';
+        else if (textEditor.state === 'selected') mode = 'Text Selected';
+        else if (state.textMode) mode = 'Text';
+        else if (state.pen) mode = 'Pen' + (state.penMode === 'free' ? ' (Free)' : '');
         else if (state.bucket) mode = 'Bucket';
         else if (state.bend) mode = 'Bend';
-        else if (state.textMode) mode = 'Text';
         else if (state.rectMode) mode = 'Rectangle';
         else if (state.ellipseMode) mode = 'Ellipse';
         else if (state.polygonMode) mode = 'Polygon (' + state.polygonSides + ')';
@@ -895,7 +925,7 @@
           ctx.setLineDash([]);
         }
 
-        // Text elements rendering
+        // Text elements rendering (live font rendering with editing states)
         try {
           if (typeof g.get_text_ids === 'function') {
             const textIds = g.get_text_ids();
@@ -904,20 +934,38 @@
                 const tid = textIds[i];
                 const tdata = g.get_text(tid);
                 if (!tdata) continue;
-                const isSelected = state.selection && state.selection.kind === 'text' && state.selection.id === tid;
+
+                const isEditing = textEditor.state === 'editing' && textEditor.textId === tid;
+                const isSelected = textEditor.state === 'selected' && textEditor.textId === tid;
                 const tx = tdata.position ? tdata.position.x : 0;
                 const ty = tdata.position ? tdata.position.y : 0;
                 const style = tdata.style || {};
                 const fontSize = style.font_size || 16;
                 const fontWeight = style.font_weight || 400;
                 const fontFamily = style.font_family || 'sans-serif';
+
+                // Ensure metrics are fresh for editing text
+                if (isEditing) {
+                  const measureResult = g.measure_text(tid);
+                  if (measureResult && measureResult.needs_measure) {
+                    const metrics = fontProvider.measure(measureResult.content, measureResult.style);
+                    g.set_text_metrics(tid, metrics);
+                  }
+                }
+
                 ctx.save();
                 ctx.translate(tx, ty);
                 if (tdata.rotation) ctx.rotate(tdata.rotation);
-                ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
-                ctx.textBaseline = 'top';
-                const alignVal = typeof tdata.align === 'number' ? tdata.align : (tdata.align === 'Center' ? 1 : tdata.align === 'Right' ? 2 : 0);
+
+                const alignVal = typeof tdata.align === 'number' ? tdata.align : 0;
                 ctx.textAlign = alignVal === 1 ? 'center' : alignVal === 2 ? 'right' : 'left';
+                ctx.textBaseline = 'alphabetic';
+
+                // Build font string: italic normal/bold 16px "Inter", sans-serif
+                const styleStr = ['normal', 'italic', 'oblique'][style.font_style || 0] || 'normal';
+                const weightStr = fontWeight;
+                ctx.font = `${styleStr} ${weightStr} ${fontSize}px "${fontFamily}", sans-serif`;
+
                 // Fill color
                 if (style.fill_color) {
                   const fc = style.fill_color;
@@ -925,17 +973,124 @@
                 } else {
                   ctx.fillStyle = '#000';
                 }
-                ctx.fillText(tdata.content || '', 0, 0);
-                // Selection highlight
-                if (isSelected) {
-                  const metrics = ctx.measureText(tdata.content || '');
-                  const h = fontSize;
-                  ctx.strokeStyle = '#d73a49';
-                  ctx.lineWidth = 1;
-                  ctx.setLineDash([3, 3]);
-                  ctx.strokeRect(-2, -2, metrics.width + 4, h + 4);
-                  ctx.setLineDash([]);
+
+                // Check for missing font
+                const font = fontManager.resolveFont(fontFamily, fontWeight, styleStr);
+                const missingFont = !font;
+
+                // Text on path
+                if (tdata.text_type && tdata.text_type.type === 'on_path') {
+                  const edgeIds = new Uint32Array(tdata.text_type.edge_ids || []);
+                  const totalLen = edgeIds.length > 0 ? g.path_length(edgeIds) : 0;
+                  if (totalLen > 0) {
+                    let currentDist = (tdata.text_type.start_offset || 0) * totalLen;
+                    const content = tdata.content || '';
+
+                    let charWidths = [];
+                    const tmp = g.measure_text(tid);
+                    if (tmp && !tmp.needs_measure && tmp.char_widths) {
+                      charWidths = tmp.char_widths;
+                    }
+
+                    for (let ci = 0; ci < content.length; ci++) {
+                      const pt = g.sample_path_point(edgeIds, currentDist);
+                      if (!pt) break;
+                      ctx.save();
+                      ctx.translate(pt.x - tx, pt.y - ty);
+                      ctx.rotate(pt.angle);
+                      ctx.fillText(content[ci], 0, 0);
+                      ctx.restore();
+                      currentDist += charWidths[ci] || fontSize * 0.6;
+                    }
+                  }
+                } else {
+                  // Label or TextBox: standard fillText
+                  if (missingFont) {
+                    ctx.fillStyle = '#d73a49';
+                    ctx.fillText(tdata.content || '', 0, 0);
+                    // Red underline for missing font
+                    const textWidth = ctx.measureText(tdata.content || '').width;
+                    ctx.beginPath();
+                    ctx.moveTo(0, 2);
+                    ctx.lineTo(textWidth, 2);
+                    ctx.strokeStyle = '#d73a49';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                  } else {
+                    ctx.fillText(tdata.content || '', 0, 0);
+                  }
                 }
+
+                // Selection highlight (if editing with selection)
+                if (isEditing) {
+                  const anchor = textEditor.selectionAnchor;
+                  const cursor = textEditor.cursorPosition;
+                  if (anchor !== null && anchor !== cursor) {
+                    const start = Math.min(anchor, cursor);
+                    const end = Math.max(anchor, cursor);
+                    const quads = g.get_text_selection_bounds(tid, start, end);
+                    if (quads) {
+                      ctx.fillStyle = 'rgba(30, 111, 235, 0.3)';
+                      for (const q of quads) {
+                        // quads are in world coords, translate to text-relative
+                        ctx.fillRect(q[0] - tx, q[1] - ty, q[2], q[3]);
+                      }
+                    }
+                  }
+
+                  // Cursor blink (if not IME composing)
+                  if (!textEditor.composing) {
+                    const positions = g.get_text_char_positions(tid);
+                    if (positions) {
+                      const pos = positions.find(p => p.char_index === textEditor.cursorPosition);
+                      if (pos) {
+                        if (Math.floor(Date.now() / 500) % 2 === 0) {
+                          ctx.fillStyle = '#000';
+                          const lineH = fontSize * (style.line_height || 1.2);
+                          ctx.fillRect(pos.x, pos.y - fontSize, 1, lineH);
+                        }
+                      }
+                    }
+                  }
+
+                  // IME composition underline
+                  if (textEditor.composing && textEditor.compositionText) {
+                    const positions = g.get_text_char_positions(tid);
+                    if (positions) {
+                      const pos = positions.find(p => p.char_index === textEditor.cursorPosition);
+                      if (pos) {
+                        const compWidth = textEditor.compositionText.length * fontSize * 0.6;
+                        ctx.strokeStyle = '#000';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(pos.x, pos.y + 2);
+                        ctx.lineTo(pos.x + compWidth, pos.y + 2);
+                        ctx.stroke();
+                      }
+                    }
+                  }
+                }
+
+                // Selection bbox outline for SELECTED state
+                if (isSelected) {
+                  const positions = g.get_text_char_positions(tid);
+                  if (positions && positions.length > 0) {
+                    let minX = Infinity, maxX = -Infinity;
+                    let minY = Infinity, maxY = -Infinity;
+                    for (const p of positions) {
+                      minX = Math.min(minX, p.x);
+                      maxX = Math.max(maxX, p.x + p.w);
+                      minY = Math.min(minY, p.y - fontSize);
+                      maxY = Math.max(maxY, p.y + fontSize * 0.3);
+                    }
+                    ctx.strokeStyle = '#d73a49';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([3, 3]);
+                    ctx.strokeRect(minX - 2, minY - 2, maxX - minX + 4, maxY - minY + 4);
+                    ctx.setLineDash([]);
+                  }
+                }
+
                 ctx.restore();
               }
             }
@@ -1474,6 +1629,7 @@
 
         const pick = g.pick(x, y, 10);
         if (state.bend && pick && pick.kind === 'edge') {
+          g.begin_undo_group_res("bend");
           state.bending = { edge: pick.id >>> 0, t: pick.t ?? 0.5 };
           return;
         }
@@ -1605,12 +1761,14 @@
             state.dragging = null;
           } else {
             // Drag node
+            g.begin_undo_group_res("move node");
             state.dragging = { id, start: [x, y], orig: [n[0], n[1]] };
           }
         } else if (pick && pick.kind === 'handle') {
           const edge = pick.edge >>> 0;
           const end = pick.end >>> 0;
           state.selection = { kind: 'edge', id: edge };
+          g.begin_undo_group_res("adjust handle");
           state.dragging = { handle: true, edge, end };
         } else if (pick && pick.kind === 'edge') {
           const id = pick.id >>> 0;
@@ -1751,7 +1909,7 @@
       });
 
       window.addEventListener('mouseup', (evt) => {
-        if (state.bending) { state.bending = null; return; }
+        if (state.bending) { g.end_undo_group_res(); state.bending = null; return; }
         const [x, y] = canvasPoint(evt);
 
         // Finish transform dragging
@@ -1919,18 +2077,11 @@
         }
         if (!state.dragging) return;
         if (state.dragging.handle) {
+          g.end_undo_group_res();
           state.dragging = null;
         } else {
-          const { id, orig } = state.dragging;
           state.dragging = null;
-          const after = g.get_node(id);
-          if (after && (after[0] !== orig[0] || after[1] !== orig[1])) {
-            state.history.push({
-              type: 'move_node', id,
-              before: orig.slice(), after: [after[0], after[1]]
-            });
-            state.redo.length = 0; // clear redo on new action
-          }
+          g.end_undo_group_res();
         }
       });
 
@@ -2057,8 +2208,8 @@
           return; // Silently ignore non-contour clipboard data
         }
 
-        // Save state for undo
-        const beforeJson = g.to_json();
+        // Begin undo group for paste operation
+        g.begin_undo_group_res("paste");
 
         const elem = payload.element;
         let newSelection = null;
@@ -2158,17 +2309,14 @@
         }
 
         if (newSelection) {
-          // Add to undo history
-          state.history.push({
-            type: 'paste',
-            before: beforeJson,
-            after: g.to_json(),
-            selection: newSelection
-          });
-          state.redo.length = 0;
+          // Engine undo: the paste operation is grouped as a single undo step
+          g.end_undo_group_res();
 
           // Select the pasted element
           state.selection = newSelection;
+        } else {
+          // Nothing pasted, discard group
+          g.end_undo_group_res();
         }
 
         scheduleRegions();
@@ -2179,8 +2327,7 @@
         if (!state.selection) return;
         await copySelection();
 
-        // Save state for undo before deleting
-        const beforeJson = g.to_json();
+        g.begin_undo_group_res("cut");
 
         // Delete based on selection type
         switch (state.selection.kind) {
@@ -2195,18 +2342,22 @@
             break;
         }
 
-        state.history.push({
-          type: 'cut',
-          before: beforeJson,
-          after: g.to_json(),
-          selection: null
-        });
-        state.redo.length = 0;
+        g.end_undo_group_res();
 
         state.selection = null;
         scheduleRegions();
         render();
       }
+
+      // Text editing keyboard events
+      window.addEventListener('keydown', (evt) => {
+        if (textEditor.state === 'editing') {
+          textEditor.onKeyDown(evt);
+          // Re-render after any edit key
+          render();
+          return;
+        }
+      });
 
       window.addEventListener('keydown', (evt) => {
         const mod = evt.ctrlKey || evt.metaKey;
@@ -2222,37 +2373,11 @@
           // Cut (Ctrl/Cmd+X)
           evt.preventDefault();
           cutSelection();
+        } else if (mod && evt.key.toLowerCase() === 'z' && evt.shiftKey) {
+          // Redo handled by separate engine undo handler below — skip
         } else if (mod && evt.key.toLowerCase() === 'z') {
-          evt.preventDefault();
-          if (evt.shiftKey) {
-            // redo
-            const op = state.redo.pop();
-            if (op) {
-              if (op.type === 'move_node') {
-                g.move_node(op.id, op.after[0], op.after[1]);
-              } else if (op.type === 'paste' || op.type === 'cut') {
-                g.from_json(op.after);
-                state.selection = op.selection;
-              }
-              state.history.push(op);
-              scheduleRegions();
-              render();
-            }
-          } else {
-            // undo
-            const op = state.history.pop();
-            if (op) {
-              if (op.type === 'move_node') {
-                g.move_node(op.id, op.before[0], op.before[1]);
-              } else if (op.type === 'paste' || op.type === 'cut') {
-                g.from_json(op.before);
-                state.selection = null;
-              }
-              state.redo.push(op);
-              scheduleRegions();
-              render();
-            }
-          }
+          // Undo handled by separate engine undo handler below — skip
+        }
         } else if (evt.key.toLowerCase() === 's') {
           state.snap = !state.snap; updateSnapLabel(); render();
         } else if (evt.key.toLowerCase() === 'f') {
@@ -2372,11 +2497,54 @@
           state.penPath = null; state.penPreview = null; render();
           return;
         }
+
+        // Check if double-clicking on text to enter edit mode
+        const dblPoint = { x: evt.clientX - canvas.getBoundingClientRect().left, y: evt.clientY - canvas.getBoundingClientRect().top };
+        const textIds = g.get_text_ids();
+        for (const tid of textIds) {
+          const thit = g.get_text_hit(tid, dblPoint.x, dblPoint.y);
+          if (thit) {
+            textEditor.edit(tid);
+            textEditor.onMouseDown(dblPoint.x, dblPoint.y);
+            state.selection = { kind: 'text', id: tid };
+            updateModeLabel();
+            render();
+            return;
+          }
+        }
+
+        // If not on text, add new text if text tool is active
+        if (state.textMode) {
+          const id = g.add_text('Text', dblPoint.x, dblPoint.y);
+          textEditor.edit(id);
+          state.selection = { kind: 'text', id: id };
+          updateModeLabel();
+          render();
+          return;
+        }
+
         // Legacy: add node on double click when not in pen mode
         const [x, y] = canvasPoint(evt);
         const [sx, sy] = snapPoint(x, y, null);
         g.add_node(sx, sy);
         render();
+      });
+
+      // IME composition events
+      canvas.addEventListener('compositionstart', () => {
+        if (textEditor.state === 'editing') textEditor.onCompositionStart();
+      });
+      canvas.addEventListener('compositionupdate', (e) => {
+        if (textEditor.state === 'editing') {
+          textEditor.onCompositionUpdate(e.data);
+          render();
+        }
+      });
+      canvas.addEventListener('compositionend', (e) => {
+        if (textEditor.state === 'editing') {
+          textEditor.onCompositionEnd(e.data);
+          render();
+        }
       });
 
       function pointInPoly(x, y, pts) {
@@ -2422,12 +2590,12 @@
       document.getElementById('saveBtn').addEventListener('click', () => {
         try {
           const obj = g.to_json();
-          localStorage.setItem('contour_doc', JSON.stringify(obj));
+          localStorage.setItem(storageKey, JSON.stringify(obj));
         } catch (e) { console.warn('Save failed', e); }
       });
       document.getElementById('loadBtn').addEventListener('click', () => {
         try {
-          const saved = localStorage.getItem('contour_doc') || localStorage.getItem('vecnet_doc');
+          const saved = localStorage.getItem(storageKey) || localStorage.getItem(legacyStorageKey);
           if (saved) { g.from_json(JSON.parse(saved)); scheduleRegions(); render(); }
         } catch (e) { console.warn('Load failed', e); }
       });
@@ -3249,6 +3417,33 @@
       document.getElementById('intersectBtn').addEventListener('click', () => doBooleanOp('intersect'));
       document.getElementById('diffBtn').addEventListener('click', () => doBooleanOp('difference'));
       document.getElementById('xorBtn').addEventListener('click', () => doBooleanOp('xor'));
+
+      // Undo/redo keyboard shortcuts
+      document.addEventListener("keydown", (e) => {
+        if (state.textInputActive) return;
+        if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+          e.preventDefault();
+          try {
+            const r = g.undo_res();
+            const parsed = JSON.parse(JSON.stringify(r));
+            if (parsed.ok) {
+              scheduleRegions();
+              render();
+            }
+          } catch (err) { console.warn("undo failed", err); }
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) {
+          e.preventDefault();
+          try {
+            const r = g.redo_res();
+            const parsed = JSON.parse(JSON.stringify(r));
+            if (parsed.ok) {
+              scheduleRegions();
+              render();
+            }
+          } catch (err) { console.warn("redo failed", err); }
+        }
+      });
 
       render();
     </script>

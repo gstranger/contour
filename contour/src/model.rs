@@ -406,6 +406,14 @@ pub struct TextElement {
     pub align: TextAlign,
     /// Type of text (label, box, or on-path)
     pub text_type: TextType,
+    /// Metrics version: incremented when content or styling changes
+    pub metrics_ver: u64,
+    /// Cached font measurements (not serialized)
+    #[serde(skip)]
+    pub cached_metrics: Option<TextMetrics>,
+    /// Cached layout from TextMetrics + TextType (not serialized)
+    #[serde(skip)]
+    pub cached_layout: Option<TextCacheLayout>,
 }
 
 impl TextElement {
@@ -419,6 +427,9 @@ impl TextElement {
             style: TextStyle::default(),
             align: TextAlign::Left,
             text_type: TextType::Label,
+            metrics_ver: 0,
+            cached_metrics: None,
+            cached_layout: None,
         }
     }
 
@@ -437,6 +448,9 @@ impl TextElement {
                 vertical_align: VerticalAlign::Top,
                 overflow: TextOverflow::Clip,
             },
+            metrics_ver: 0,
+            cached_metrics: None,
+            cached_layout: None,
         }
     }
 
@@ -453,8 +467,59 @@ impl TextElement {
                 edge_ids,
                 start_offset: 0.0,
             },
+            metrics_ver: 0,
+            cached_metrics: None,
+            cached_layout: None,
         }
     }
+}
+
+/// Position of one character within its text element.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct TextCharPosition {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub char_index: u32,
+    /// Line number (0-indexed) for multi-line text boxes
+    pub line_index: u32,
+}
+
+/// Text measurement result from an external font provider.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct TextMetrics {
+    pub char_widths: Vec<f32>,
+    pub line_height: f32,
+    pub ascent: f32,
+    pub descent: f32,
+    pub total_width: f32,
+}
+
+/// Layout computed from TextMetrics + TextType.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct TextCacheLayout {
+    pub char_positions: Vec<TextCharPosition>,
+}
+
+/// Returned by `measure_text()`. Either cached metrics or a request for JS-side measurement.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct TextMeasureResult {
+    /// True if the caller should measure the text via a font provider
+    pub needs_measure: bool,
+    /// The text content to measure (valid when needs_measure is true, empty string otherwise)
+    pub content: String,
+    /// The text style (serialized; valid when needs_measure is true, defaults otherwise)
+    pub style: TextStyle,
+    /// Cached per-character widths (valid when needs_measure is false)
+    pub char_widths: Vec<f32>,
+    /// Cached line height (valid when needs_measure is false)
+    pub line_height: f32,
+    /// Cached ascent (valid when needs_measure is false)
+    pub ascent: f32,
+    /// Cached descent (valid when needs_measure is false)
+    pub descent: f32,
+    /// Cached total width (valid when needs_measure is false)
+    pub total_width: f32,
 }
 
 /// Glyph outline for text-to-outlines conversion

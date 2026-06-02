@@ -52,5 +52,67 @@ export declare class Graph {
   get_polyline_points_res(id: number): Result<Float32Array>;
   add_svg_path_res(d: string): Result<number>;
   to_svg_paths_res(): Result<string[]>;
+  // Undo/redo
+  begin_undo_group_res(label: string): Result<boolean>;
+  end_undo_group_res(): Result<{ committed: boolean; depth_was_zero: boolean }>;
+  undo_res(): Result<{ label: string; depth_remaining: number }>;
+  redo_res(): Result<{ label: string; depth_remaining: number }>;
+  can_undo_res(): Result<boolean>;
+  can_redo_res(): Result<boolean>;
+  undo_clear_res(): Result<boolean>;
+  undo_depth_res(): Result<{ undo: number; redo: number }>;
+
+  // Text metrics and layout
+  path_length(edge_ids: Uint32Array): number;
+  path_length_res(edge_ids: Uint32Array): Result<number>;
+  measure_text(id: number): TextMeasureResult | null;
+  measure_text_res(id: number): Result<TextMeasureResult>;
+  set_text_metrics(id: number, metrics: TextMetrics): boolean;
+  set_text_metrics_res(id: number, metrics: TextMetrics): Result<boolean>;
+  get_text_char_positions(id: number): TextCharPosition[] | null;
+  get_text_char_positions_res(id: number): Result<TextCharPosition[]>;
+  get_text_hit(id: number, x: number, y: number): [number, number] | null;
+  get_text_hit_res(id: number, x: number, y: number): Result<[number, number]>;
+  get_text_selection_bounds(id: number, start: number, end: number): [number, number, number, number][] | null;
+  get_text_selection_bounds_res(id: number, start: number, end: number): Result<[number, number, number, number][]>;
+  sample_path_point(edge_ids: Uint32Array, distance: number): { x: number; y: number; angle: number } | null;
+  sample_path_point_res(edge_ids: Uint32Array, distance: number): Result<{ x: number; y: number; angle: number }>;
+}
+
+export interface TextMeasureResult {
+  needs_measure: boolean;
+  content: string;
+  style: {
+    font_family: string;
+    font_size: number;
+    font_weight: number;
+    font_style: number;
+    fill_color: { r: number; g: number; b: number; a: number } | null;
+    stroke_color: { r: number; g: number; b: number; a: number } | null;
+    stroke_width: number;
+    letter_spacing: number;
+    line_height: number;
+  };
+  char_widths: number[];
+  line_height: number;
+  ascent: number;
+  descent: number;
+  total_width: number;
+}
+
+export interface TextMetrics {
+  char_widths: number[];
+  line_height: number;
+  ascent: number;
+  descent: number;
+  total_width: number;
+}
+
+export interface TextCharPosition {
+  x: number;
+  y: number;
+  w: number;
+  char_index: number;
+  line_index: number;
 }
 

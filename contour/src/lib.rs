@@ -1,6 +1,8 @@
 pub mod layers;
 pub mod model;
+pub mod undo;
 pub mod geometry {
+    pub mod arc;
     pub mod cubic;
     pub mod flatten;
     pub mod intersect;
@@ -27,8 +29,9 @@ use layers::LayerSystem;
 use model::{
     Color, ColorStop, DropShadow, Edge, EdgeKind, Effect, EffectId, EffectStack, FillRule,
     FillState, FontStyle, Gradient, GradientId, GradientUnits, HandleMode, LayerId, LinearGradient,
-    Node, PrimitiveResult, RadialGradient, Shape, SpreadMethod, TextAlign, TextElement, TextId,
-    TextOverflow, TextStyle, TextType, Vec2, VerticalAlign,
+    Node, PrimitiveResult, RadialGradient, Shape, SpreadMethod, TextAlign, TextCacheLayout,
+    TextCharPosition, TextElement, TextId, TextMeasureResult, TextMetrics, TextOverflow,
+    TextStyle, TextType, Vec2, VerticalAlign,
 };
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -114,6 +117,12 @@ pub struct Graph {
     pub(crate) flatten_index: RefCell<Option<crate::algorithms::regions::FlattenIndex>>,
     pub(crate) flatten_cache: RefCell<Option<crate::algorithms::regions::FlattenCache>>,
     pub(crate) incr_plan: RefCell<Option<crate::algorithms::incremental::IncrPlan>>,
+    // Undo/redo system
+    pub(crate) undo_stack: crate::undo::UndoStack,
+    pub(crate) redo_stack: crate::undo::UndoStack,
+    pub(crate) undo_group_depth: u32,
+    pub(crate) current_snapshot: Option<crate::undo::SnapshotBatch>,
+    pub(crate) current_undo_label: Option<String>,
 }
 
 pub struct EdgeArrays {
@@ -257,6 +266,11 @@ impl Graph {
             flatten_index: RefCell::new(None),
             flatten_cache: RefCell::new(None),
             incr_plan: RefCell::new(None),
+            undo_stack: crate::undo::UndoStack::new(),
+            redo_stack: crate::undo::UndoStack::new(),
+            undo_group_depth: 0,
+            current_snapshot: None,
+            current_undo_label: None,
         }
     }
     pub fn geom_version(&self) -> u64 {
@@ -408,6 +422,19 @@ impl Graph {
         self.dirty.nodes_added.insert(id);
         self.expand_dirty_bbox_pt(x, y);
         self.bump();
+
+        if self.undo_group_depth > 0 {
+            self.snapshot_node(id);
+        } else {
+            self.redo_stack.clear();
+            self.undo_stack.push(crate::undo::UndoEntry {
+                label: "add node".into(),
+                action: crate::undo::UndoAction::Command(
+                    crate::undo::UndoCommand::AddNode { id, pos: (x, y) },
+                ),
+            });
+        }
+
         id
     }
     pub fn move_node(&mut self, id: u32, x: f32, y: f32) -> bool {
@@ -425,6 +452,7 @@ impl Graph {
         {
             return true;
         }
+        self.snapshot_node(id);
         if let Some(Some(n)) = self.nodes.get_mut(id as usize) {
             n.x = x;
             n.y = y;
@@ -456,10 +484,12 @@ impl Graph {
             None => return false,
         };
         let mut incident: Vec<usize> = Vec::new();
+        let mut incident_edges_with_state: Vec<(u32, Edge)> = Vec::new();
         for (eid, e) in self.edges.iter().enumerate() {
             if let Some(edge) = e {
                 if edge.a == id || edge.b == id {
                     incident.push(eid);
+                    incident_edges_with_state.push((eid as u32, edge.clone()));
                 }
             }
         }
@@ -475,10 +505,31 @@ impl Graph {
             if let Some(slot) = self.edges.get_mut(eid) {
                 *slot = None;
             }
+            self.layer_system.remove_edge(eid as u32);
             self.dirty.edges_removed.insert(eid as u32);
         }
         self.expand_dirty_bbox_around(nx, ny, 12.0);
         self.dirty.nodes_removed.insert(id);
+
+        if self.undo_group_depth > 0 {
+            self.snapshot_node(id);
+            for &(eid, _) in &incident_edges_with_state {
+                self.snapshot_edge(eid);
+            }
+        } else {
+            self.redo_stack.clear();
+            self.undo_stack.push(crate::undo::UndoEntry {
+                label: "remove node".into(),
+                action: crate::undo::UndoAction::Command(
+                    crate::undo::UndoCommand::RemoveNode {
+                        id,
+                        pos: (nx, ny),
+                        incident: incident_edges_with_state,
+                    },
+                ),
+            });
+        }
+
         self.bump();
         true
     }
@@ -531,23 +582,59 @@ impl Graph {
             self.expand_dirty_bbox_box(Some((minx, miny, maxx, maxy)));
         }
         self.bump();
+
+        if self.undo_group_depth > 0 {
+            self.snapshot_edge(id);
+        } else {
+            let edge_snapshot = self.edges[id as usize].clone();
+            self.redo_stack.clear();
+            self.undo_stack.push(crate::undo::UndoEntry {
+                label: "add edge".into(),
+                action: crate::undo::UndoAction::Command(
+                    crate::undo::UndoCommand::AddEdge {
+                        id,
+                        a,
+                        b,
+                        edge: edge_snapshot.unwrap(),
+                    },
+                ),
+            });
+        }
+
         Some(id)
     }
     pub fn remove_edge(&mut self, id: u32) -> bool {
-        let old_bb = if let Some(Some(edge)) = self.edges.get(id as usize) {
-            self.edge_aabb_of(edge)
+        let old = if let Some(Some(edge)) = self.edges.get(id as usize) {
+            edge.clone()
         } else {
-            None
+            return false;
         };
+        if let Some(bb) = self.edge_aabb_of(&old) {
+            self.expand_dirty_bbox_box(Some(bb));
+        }
         if let Some(slot) = self.edges.get_mut(id as usize) {
             if slot.is_some() {
                 *slot = None;
-                // Remove from layer system
                 self.layer_system.remove_edge(id);
-                if let Some(bb) = old_bb {
-                    self.expand_dirty_bbox_box(Some(bb));
-                }
                 self.dirty.edges_removed.insert(id);
+
+                if self.undo_group_depth > 0 {
+                    self.snapshot_edge(id);
+                } else {
+                    self.redo_stack.clear();
+                    self.undo_stack.push(crate::undo::UndoEntry {
+                        label: "remove edge".into(),
+                        action: crate::undo::UndoAction::Command(
+                            crate::undo::UndoCommand::RemoveEdge {
+                                id,
+                                endpoint_a: old.a,
+                                endpoint_b: old.b,
+                                edge: old,
+                            },
+                        ),
+                    });
+                }
+
                 self.bump();
                 return true;
             }
@@ -614,12 +701,22 @@ impl Graph {
         json::to_json_impl(self)
     }
     pub fn from_json_value(&mut self, v: serde_json::Value) -> bool {
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.undo_group_depth = 0;
+        self.current_snapshot = None;
+        self.current_undo_label = None;
         json::from_json_impl(self, v)
     }
     pub fn from_json_value_strict(
         &mut self,
         v: serde_json::Value,
     ) -> Result<bool, (&'static str, String)> {
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.undo_group_depth = 0;
+        self.current_snapshot = None;
+        self.current_undo_label = None;
         json::from_json_impl_strict(self, v)
     }
 
@@ -641,6 +738,11 @@ impl Graph {
         self.flatten_index.borrow_mut().take();
         self.flatten_cache.borrow_mut().take();
         self.incr_plan.borrow_mut().take();
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.undo_group_depth = 0;
+        self.current_snapshot = None;
+        self.current_undo_label = None;
         self.mark_full_dirty();
         self.bump();
     }
@@ -664,6 +766,7 @@ impl Graph {
     }
     // set_edge_cubic defined below with guards
     pub fn set_edge_line(&mut self, id: u32) -> bool {
+        self.snapshot_edge(id);
         let changed = if let Some(Some(edge)) = self.edges.get_mut(id as usize) {
             if matches!(edge.kind, EdgeKind::Line) {
                 false
@@ -715,6 +818,7 @@ impl Graph {
         if !x.is_finite() || !y.is_finite() {
             return false;
         }
+        self.snapshot_edge(id);
         let changed = {
             let edge = match self.edges.get_mut(id as usize) {
                 Some(Some(edge)) => edge,
@@ -766,6 +870,7 @@ impl Graph {
         true
     }
     pub fn set_handle_mode(&mut self, id: u32, mode: u8) -> bool {
+        self.snapshot_edge(id);
         let changed = {
             let edge = match self.edges.get_mut(id as usize) {
                 Some(Some(edge)) => edge,
@@ -797,6 +902,7 @@ impl Graph {
         if !p1x.is_finite() || !p1y.is_finite() || !p2x.is_finite() || !p2y.is_finite() {
             return false;
         }
+        self.snapshot_edge(id);
         let changed = {
             let edge = match self.edges.get_mut(id as usize) {
                 Some(Some(edge)) => edge,
@@ -860,6 +966,7 @@ impl Graph {
         true
     }
     pub fn bend_edge_to(&mut self, id: u32, t: f32, tx: f32, ty: f32, stiffness: f32) -> bool {
+        self.snapshot_edge(id);
         let did_change = {
             let edge = match self.edges.get_mut(id as usize) {
                 Some(Some(edge)) => edge,
@@ -1604,14 +1711,17 @@ impl Graph {
                 color: cur.color,
             },
         );
+        self.snapshot_fill(key);
         next
     }
     pub fn set_region_fill(&mut self, key: u32, filled: bool) {
         let color = self.fills.get(&key).and_then(|st| st.color);
+        self.snapshot_fill(key);
         self.fills.insert(key, FillState { filled, color });
     }
     pub fn set_region_color(&mut self, key: u32, r: u8, g: u8, b: u8, a: u8) {
         let filled = self.fills.get(&key).map(|st| st.filled).unwrap_or(true);
+        self.snapshot_fill(key);
         self.fills.insert(
             key,
             FillState {
@@ -1729,6 +1839,380 @@ impl Graph {
 
     fn bump(&mut self) {
         self.geom_ver = self.geom_ver.wrapping_add(1);
+    }
+
+    // --- Snapshot recording helpers ---
+
+    fn snapshot_node(&mut self, id: u32) {
+        if let Some(ref mut snap) = self.current_snapshot {
+            if !snap.nodes.iter().any(|(nid, _)| *nid == id) {
+                let state = self.nodes.get(id as usize).and_then(|n| *n);
+                snap.nodes.push((id, state));
+            }
+        }
+    }
+
+    fn snapshot_edge(&mut self, id: u32) {
+        if let Some(ref mut snap) = self.current_snapshot {
+            if !snap.edges.iter().any(|(eid, _)| *eid == id) {
+                let state = self.edges.get(id as usize).and_then(|e| e.clone());
+                snap.edges.push((id, state));
+            }
+        }
+    }
+
+    fn snapshot_fill(&mut self, key: u32) {
+        if let Some(ref mut snap) = self.current_snapshot {
+            if !snap.fills.iter().any(|(k, _)| *k == key) {
+                let state = self.fills.get(&key).copied();
+                snap.fills.push((key, state));
+            }
+        }
+    }
+
+    fn snapshot_shape(&mut self, id: u32) {
+        if let Some(ref mut snap) = self.current_snapshot {
+            if !snap.shapes.iter().any(|(sid, _)| *sid == id) {
+                let state = self.shapes.get(id as usize).and_then(|s| s.clone());
+                snap.shapes.push((id, state));
+            }
+        }
+    }
+
+    fn snapshot_text(&mut self, id: u32) {
+        if let Some(ref mut snap) = self.current_snapshot {
+            if !snap.texts.iter().any(|(tid, _)| *tid == id) {
+                let state = self.texts.get(id as usize).and_then(|t| t.clone());
+                snap.texts.push((id, state));
+            }
+        }
+    }
+
+    // --- Undo group lifecycle ---
+
+    /// Begin a new undo group. If a group is already open (depth > 0),
+    /// this is a no-op except for incrementing the depth counter.
+    /// The label is used when presenting the undo step to the UI.
+    pub fn begin_undo_group(&mut self, label: String) {
+        self.undo_group_depth += 1;
+        if self.undo_group_depth == 1 {
+            self.current_undo_label = Some(label);
+            self.current_snapshot = Some(crate::undo::SnapshotBatch::new());
+        }
+    }
+
+    /// End the current undo group. When the outermost group closes
+    /// (depth reaches 0), the accumulated snapshot is committed to
+    /// the undo stack and the redo stack is cleared.
+    /// Returns true if a group was committed, false if no group was open
+    /// or a nested group simply decremented.
+    pub fn end_undo_group(&mut self) -> bool {
+        if self.undo_group_depth == 0 {
+            return false;
+        }
+        self.undo_group_depth -= 1;
+        if self.undo_group_depth == 0 {
+            let label = self.current_undo_label.take().unwrap_or_default();
+            if let Some(snapshot) = self.current_snapshot.take() {
+                if !snapshot.is_empty() {
+                    self.redo_stack.clear();
+                    self.undo_stack.push(crate::undo::UndoEntry {
+                        label,
+                        action: crate::undo::UndoAction::Snapshot(snapshot),
+                    });
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Undo the last operation. Returns (label, depth_remaining) or None if empty.
+    pub fn undo(&mut self) -> Option<(String, usize)> {
+        if self.undo_group_depth > 0 {
+            return None;
+        }
+        let entry = self.undo_stack.pop()?;
+        let label = entry.label.clone();
+        let depth_remaining = self.undo_stack.len();
+
+        match &entry.action {
+            crate::undo::UndoAction::Command(cmd) => {
+                self.apply_command_reverse(cmd);
+            }
+            crate::undo::UndoAction::Snapshot(snapshot) => {
+                let redo_after = self.capture_snapshot_from(snapshot);
+                self.restore_snapshot(snapshot);
+                self.redo_stack.push(crate::undo::UndoEntry {
+                    label: label.clone(),
+                    action: crate::undo::UndoAction::Snapshot(redo_after),
+                });
+                self.geom_ver = self.geom_ver.wrapping_add(1);
+                self.dirty_reset();
+                return Some((label, depth_remaining));
+            }
+        }
+
+        self.redo_stack.push(entry);
+        self.geom_ver = self.geom_ver.wrapping_add(1);
+        self.dirty_reset();
+        Some((label, depth_remaining))
+    }
+
+    /// Redo the last undone operation. Returns (label, depth_remaining) or None if empty.
+    pub fn redo(&mut self) -> Option<(String, usize)> {
+        if self.undo_group_depth > 0 {
+            return None;
+        }
+        let entry = self.redo_stack.pop()?;
+        let label = entry.label.clone();
+        let depth_remaining = self.redo_stack.len();
+
+        match &entry.action {
+            crate::undo::UndoAction::Command(cmd) => {
+                self.apply_command_forward(cmd);
+            }
+            crate::undo::UndoAction::Snapshot(snapshot) => {
+                let undo_snapshot = self.capture_snapshot_from(snapshot);
+                self.restore_snapshot(snapshot);
+                self.undo_stack.push(crate::undo::UndoEntry {
+                    label: label.clone(),
+                    action: crate::undo::UndoAction::Snapshot(undo_snapshot),
+                });
+                self.geom_ver = self.geom_ver.wrapping_add(1);
+                self.dirty_reset();
+                return Some((label, depth_remaining));
+            }
+        }
+
+        self.undo_stack.push(entry);
+        self.geom_ver = self.geom_ver.wrapping_add(1);
+        self.dirty_reset();
+        Some((label, depth_remaining))
+    }
+
+    fn apply_command_reverse(&mut self, cmd: &crate::undo::UndoCommand) {
+        match cmd {
+            crate::undo::UndoCommand::AddNode { id, .. } => {
+                self.nodes[*id as usize] = None;
+                let mut to_remove: Vec<usize> = Vec::new();
+                for (eid, e) in self.edges.iter().enumerate() {
+                    if let Some(edge) = e {
+                        if edge.a == *id || edge.b == *id {
+                            to_remove.push(eid);
+                        }
+                    }
+                }
+                for eid in to_remove {
+                    self.edges[eid] = None;
+                }
+            }
+            crate::undo::UndoCommand::RemoveNode { id, pos, incident } => {
+                if (*id as usize) >= self.nodes.len() {
+                    self.nodes.resize(*id as usize + 1, None);
+                }
+                self.nodes[*id as usize] = Some(Node { x: pos.0, y: pos.1 });
+                for (eid, edge) in incident {
+                    if (*eid as usize) >= self.edges.len() {
+                        self.edges.resize(*eid as usize + 1, None);
+                    }
+                    self.edges[*eid as usize] = Some(edge.clone());
+                }
+            }
+            crate::undo::UndoCommand::AddEdge { id, .. } => {
+                self.edges[*id as usize] = None;
+            }
+            crate::undo::UndoCommand::RemoveEdge { id, endpoint_a: _, endpoint_b: _, edge } => {
+                if (*id as usize) >= self.edges.len() {
+                    self.edges.resize(*id as usize + 1, None);
+                }
+                self.edges[*id as usize] = Some(edge.clone());
+            }
+            crate::undo::UndoCommand::AddShape { id, .. } => {
+                if (*id as usize) < self.shapes.len() {
+                    self.shapes[*id as usize] = None;
+                }
+            }
+            crate::undo::UndoCommand::RemoveShape { id, shape } => {
+                if (*id as usize) >= self.shapes.len() {
+                    self.shapes.resize(*id as usize + 1, None);
+                }
+                self.shapes[*id as usize] = Some(shape.clone());
+            }
+            crate::undo::UndoCommand::AddText { id, .. } => {
+                if (*id as usize) < self.texts.len() {
+                    self.texts[*id as usize] = None;
+                }
+            }
+            crate::undo::UndoCommand::RemoveText { id, text } => {
+                if (*id as usize) >= self.texts.len() {
+                    self.texts.resize(*id as usize + 1, None);
+                }
+                self.texts[*id as usize] = Some(text.clone());
+            }
+        }
+    }
+
+    fn apply_command_forward(&mut self, cmd: &crate::undo::UndoCommand) {
+        match cmd {
+            crate::undo::UndoCommand::AddNode { id, pos } => {
+                if (*id as usize) >= self.nodes.len() {
+                    self.nodes.resize(*id as usize + 1, None);
+                }
+                self.nodes[*id as usize] = Some(Node { x: pos.0, y: pos.1 });
+            }
+            crate::undo::UndoCommand::RemoveNode { id, .. } => {
+                self.nodes[*id as usize] = None;
+                let mut to_remove: Vec<usize> = Vec::new();
+                for (eid, e) in self.edges.iter().enumerate() {
+                    if let Some(edge) = e {
+                        if edge.a == *id || edge.b == *id {
+                            to_remove.push(eid);
+                        }
+                    }
+                }
+                for eid in to_remove {
+                    self.edges[eid] = None;
+                }
+            }
+            crate::undo::UndoCommand::AddEdge { id, a: _, b: _, edge } => {
+                if (*id as usize) >= self.edges.len() {
+                    self.edges.resize(*id as usize + 1, None);
+                }
+                self.edges[*id as usize] = Some(edge.clone());
+            }
+            crate::undo::UndoCommand::RemoveEdge { id, .. } => {
+                if (*id as usize) < self.edges.len() {
+                    self.edges[*id as usize] = None;
+                }
+            }
+            crate::undo::UndoCommand::AddShape { id, shape } => {
+                if (*id as usize) >= self.shapes.len() {
+                    self.shapes.resize(*id as usize + 1, None);
+                }
+                self.shapes[*id as usize] = Some(shape.clone());
+            }
+            crate::undo::UndoCommand::RemoveShape { id, .. } => {
+                if (*id as usize) < self.shapes.len() {
+                    self.shapes[*id as usize] = None;
+                }
+            }
+            crate::undo::UndoCommand::AddText { id, text } => {
+                if (*id as usize) >= self.texts.len() {
+                    self.texts.resize(*id as usize + 1, None);
+                }
+                self.texts[*id as usize] = Some(text.clone());
+            }
+            crate::undo::UndoCommand::RemoveText { id, .. } => {
+                if (*id as usize) < self.texts.len() {
+                    self.texts[*id as usize] = None;
+                }
+            }
+        }
+    }
+
+    fn capture_snapshot_from(&self, source: &crate::undo::SnapshotBatch) -> crate::undo::SnapshotBatch {
+        let mut snap = crate::undo::SnapshotBatch::new();
+        for &(id, _) in &source.nodes {
+            let state = self.nodes.get(id as usize).and_then(|n| *n);
+            snap.nodes.push((id, state));
+        }
+        for &(id, _) in &source.edges {
+            let state = self.edges.get(id as usize).and_then(|e| e.clone());
+            snap.edges.push((id, state));
+        }
+        for &(key, _) in &source.fills {
+            let state = self.fills.get(&key).copied();
+            snap.fills.push((key, state));
+        }
+        for &(id, _) in &source.shapes {
+            let state = self.shapes.get(id as usize).and_then(|s| s.clone());
+            snap.shapes.push((id, state));
+        }
+        for &(id, _) in &source.texts {
+            let state = self.texts.get(id as usize).and_then(|t| t.clone());
+            snap.texts.push((id, state));
+        }
+        snap
+    }
+
+    fn restore_snapshot(&mut self, snapshot: &crate::undo::SnapshotBatch) {
+        for &(id, state) in &snapshot.nodes {
+            if (id as usize) < self.nodes.len() {
+                self.nodes[id as usize] = state;
+            } else if state.is_some() {
+                self.nodes.resize(id as usize + 1, None);
+                self.nodes[id as usize] = state;
+            }
+        }
+        for &(id, ref state) in &snapshot.edges {
+            if (id as usize) < self.edges.len() {
+                self.edges[id as usize] = state.clone();
+            } else if state.is_some() {
+                self.edges.resize(id as usize + 1, None);
+                self.edges[id as usize] = state.clone();
+            }
+        }
+        for &(key, state) in &snapshot.fills {
+            if let Some(st) = state {
+                self.fills.insert(key, st);
+            } else {
+                self.fills.remove(&key);
+            }
+        }
+        for &(id, ref state) in &snapshot.shapes {
+            if (id as usize) < self.shapes.len() {
+                self.shapes[id as usize] = state.clone();
+            } else if state.is_some() {
+                self.shapes.resize(id as usize + 1, None);
+                self.shapes[id as usize] = state.clone();
+            }
+        }
+        for &(id, ref state) in &snapshot.texts {
+            if (id as usize) < self.texts.len() {
+                self.texts[id as usize] = state.clone();
+            } else if state.is_some() {
+                self.texts.resize(id as usize + 1, None);
+                self.texts[id as usize] = state.clone();
+            }
+        }
+        self.region_cache.borrow_mut().take();
+        self.flatten_index.borrow_mut().take();
+        self.flatten_cache.borrow_mut().take();
+        self.incr_plan.borrow_mut().take();
+        self.pick_index.borrow_mut().take();
+        self.mark_full_dirty();
+    }
+
+    // --- Undo/redo public helpers ---
+
+    /// Check if an undo group is currently open.
+    pub fn is_undo_group_open(&self) -> bool {
+        self.undo_group_depth > 0
+    }
+
+    /// Check if there are entries in the undo stack.
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    /// Check if there are entries in the redo stack.
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
+    /// Clear both undo and redo stacks and reset group state.
+    pub fn undo_clear(&mut self) {
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.undo_group_depth = 0;
+        self.current_snapshot = None;
+        self.current_undo_label = None;
+    }
+
+    /// Get the depth of both undo and redo stacks.
+    pub fn undo_depth(&self) -> (usize, usize) {
+        (self.undo_stack.len(), self.redo_stack.len())
     }
 }
 
@@ -2888,6 +3372,9 @@ impl Graph {
     pub fn set_text_content(&mut self, id: TextId, content: &str) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.content = content.to_string();
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2897,6 +3384,9 @@ impl Graph {
     pub fn set_text_position(&mut self, id: TextId, x: f32, y: f32) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.position = Vec2 { x, y };
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            // Position only invalidates layout, not font metrics
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2906,6 +3396,9 @@ impl Graph {
     pub fn set_text_rotation(&mut self, id: TextId, radians: f32) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.rotation = radians;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            // Rotation only invalidates layout, not font metrics
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2924,6 +3417,9 @@ impl Graph {
             text.position.x = cx + dx * cos_a - dy * sin_a;
             text.position.y = cy + dx * sin_a + dy * cos_a;
             text.rotation += angle;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            // Position/rotation only invalidates layout, not font metrics
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2950,6 +3446,9 @@ impl Graph {
                 *width *= sx.abs();
                 *height *= sy.abs();
             }
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2959,6 +3458,9 @@ impl Graph {
     pub fn set_text_align(&mut self, id: TextId, align: TextAlign) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.align = align;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            // Alignment only affects layout, not font metrics
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2968,6 +3470,9 @@ impl Graph {
     pub fn set_text_style(&mut self, id: TextId, style: TextStyle) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style = style;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2978,6 +3483,9 @@ impl Graph {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.font_family = font_family.to_string();
             text.style.font_size = font_size;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2987,6 +3495,9 @@ impl Graph {
     pub fn set_text_font_weight(&mut self, id: TextId, weight: u16) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.font_weight = weight.clamp(100, 900);
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -2996,6 +3507,9 @@ impl Graph {
     pub fn set_text_font_style(&mut self, id: TextId, style: FontStyle) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.font_style = style;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3005,6 +3519,7 @@ impl Graph {
     pub fn set_text_fill_color(&mut self, id: TextId, r: u8, g: u8, b: u8, a: u8) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.fill_color = Some(Color { r, g, b, a });
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
             return true;
         }
         false
@@ -3014,6 +3529,7 @@ impl Graph {
     pub fn clear_text_fill_color(&mut self, id: TextId) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.fill_color = None;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
             return true;
         }
         false
@@ -3023,6 +3539,7 @@ impl Graph {
     pub fn set_text_stroke_color(&mut self, id: TextId, r: u8, g: u8, b: u8, a: u8) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.stroke_color = Some(Color { r, g, b, a });
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
             return true;
         }
         false
@@ -3032,6 +3549,7 @@ impl Graph {
     pub fn set_text_stroke_width(&mut self, id: TextId, width: f32) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.stroke_width = width.max(0.0);
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
             return true;
         }
         false
@@ -3041,6 +3559,9 @@ impl Graph {
     pub fn set_text_letter_spacing(&mut self, id: TextId, spacing: f32) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.letter_spacing = spacing;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3050,6 +3571,9 @@ impl Graph {
     pub fn set_text_line_height(&mut self, id: TextId, line_height: f32) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.style.line_height = line_height.max(0.1);
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            text.cached_metrics = None;
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3064,6 +3588,9 @@ impl Graph {
                 vertical_align: VerticalAlign::Top,
                 overflow: TextOverflow::Clip,
             };
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            // TextType change invalidates layout but not font metrics
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3092,6 +3619,9 @@ impl Graph {
                 edge_ids,
                 start_offset: start_offset.clamp(0.0, 1.0),
             };
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            // TextType change invalidates layout but not font metrics
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3101,6 +3631,9 @@ impl Graph {
     pub fn convert_text_to_label(&mut self, id: TextId) -> bool {
         if let Some(Some(text)) = self.texts.get_mut(id as usize) {
             text.text_type = TextType::Label;
+            text.metrics_ver = text.metrics_ver.wrapping_add(1);
+            // TextType change invalidates layout but not font metrics
+            text.cached_layout = None;
             return true;
         }
         false
@@ -3121,6 +3654,9 @@ impl Graph {
                     vertical_align,
                     overflow,
                 };
+                text.metrics_ver = text.metrics_ver.wrapping_add(1);
+                // Box size change invalidates layout but not font metrics
+                text.cached_layout = None;
                 return true;
             }
         }
@@ -3143,6 +3679,9 @@ impl Graph {
                     vertical_align: align,
                     overflow,
                 };
+                text.metrics_ver = text.metrics_ver.wrapping_add(1);
+                // Alignment only affects layout, not font metrics
+                text.cached_layout = None;
                 return true;
             }
         }
@@ -3165,6 +3704,9 @@ impl Graph {
                     vertical_align,
                     overflow,
                 };
+                text.metrics_ver = text.metrics_ver.wrapping_add(1);
+                // Overflow only affects layout, not font metrics
+                text.cached_layout = None;
                 return true;
             }
         }
@@ -3180,6 +3722,9 @@ impl Graph {
                     edge_ids,
                     start_offset: offset.clamp(0.0, 1.0),
                 };
+                text.metrics_ver = text.metrics_ver.wrapping_add(1);
+                // Offset only affects layout, not font metrics
+                text.cached_layout = None;
                 return true;
             }
         }
@@ -3205,9 +3750,186 @@ impl Graph {
                     edge_ids,
                     start_offset,
                 };
+                text.metrics_ver = text.metrics_ver.wrapping_add(1);
+                // Path change only affects layout, not font metrics
+                text.cached_layout = None;
                 return true;
             }
         }
         false
+    }
+
+    /// Poll whether a text element needs JS-side font measurement.
+    /// Returns None if the text ID is invalid.
+    /// Returns `needs_measure: true` if content/style changed since last measure.
+    /// Returns `needs_measure: false` with cached metrics if still fresh.
+    pub fn measure_text(&self, id: TextId) -> Option<TextMeasureResult> {
+        let text = self.texts.get(id as usize)?.as_ref()?;
+        if text.cached_metrics.is_none() {
+            Some(TextMeasureResult {
+                needs_measure: true,
+                content: text.content.clone(),
+                style: text.style.clone(),
+                char_widths: Vec::new(),
+                line_height: 0.0,
+                ascent: 0.0,
+                descent: 0.0,
+                total_width: 0.0,
+            })
+        } else {
+            let m = text.cached_metrics.as_ref().unwrap();
+            Some(TextMeasureResult {
+                needs_measure: false,
+                content: String::new(),
+                style: TextStyle::default(),
+                char_widths: m.char_widths.clone(),
+                line_height: m.line_height,
+                ascent: m.ascent,
+                descent: m.descent,
+                total_width: m.total_width,
+            })
+        }
+    }
+
+    /// Store JS-measured text metrics and recompute per-character layout.
+    /// Returns false if the text ID is invalid.
+    pub fn set_text_metrics(&mut self, id: TextId, metrics: TextMetrics) -> bool {
+        let text = match self.texts.get_mut(id as usize) {
+            Some(Some(t)) => t,
+            _ => return false,
+        };
+
+        // Compute character positions from metrics
+        let mut char_positions = Vec::with_capacity(metrics.char_widths.len());
+        let chars: Vec<char> = text.content.chars().collect();
+        let letter_spacing_px = text.style.letter_spacing * text.style.font_size;
+
+        match &text.text_type {
+            TextType::Label => {
+                let mut x = 0.0f32;
+                let y = metrics.ascent;
+
+                for (i, _ch) in chars.iter().enumerate() {
+                    let w = metrics.char_widths.get(i).copied().unwrap_or(metrics.line_height * 0.5);
+                    char_positions.push(TextCharPosition {
+                        x,
+                        y,
+                        w,
+                        char_index: i as u32,
+                        line_index: 0,
+                    });
+                    x += w + letter_spacing_px;
+                }
+            }
+            TextType::Box { width, height, vertical_align, overflow: _overflow } => {
+                use crate::algorithms::text_layout::layout_text_box;
+                let layout = layout_text_box(
+                    &text.content,
+                    *width,
+                    *height,
+                    &text.style,
+                    &metrics.char_widths,
+                    text.align,
+                    *vertical_align,
+                );
+
+                let mut char_idx = 0u32;
+                for (line_num, line) in layout.lines.iter().enumerate() {
+                    let mut x = line.x_offset;
+                    for _ch in line.text.chars() {
+                        let w = metrics.char_widths
+                            .get(char_idx as usize)
+                            .copied()
+                            .unwrap_or(metrics.line_height * 0.5);
+                        char_positions.push(TextCharPosition {
+                            x,
+                            y: line.y_offset,
+                            w,
+                            char_index: char_idx,
+                            line_index: line_num as u32,
+                        });
+                        x += w + letter_spacing_px;
+                        char_idx += 1;
+                    }
+                    // Skip newline character index
+                    char_idx += 1;
+                }
+            }
+            TextType::OnPath { .. } => {
+                let mut x = 0.0f32;
+                let y = metrics.ascent;
+                for (i, _ch) in chars.iter().enumerate() {
+                    let w = metrics.char_widths.get(i).copied().unwrap_or(metrics.line_height * 0.5);
+                    char_positions.push(TextCharPosition {
+                        x,
+                        y,
+                        w,
+                        char_index: i as u32,
+                        line_index: 0,
+                    });
+                    x += w + letter_spacing_px;
+                }
+            }
+        }
+
+        text.cached_metrics = Some(metrics);
+        text.cached_layout = Some(TextCacheLayout { char_positions });
+        true
+    }
+
+    /// Get per-character positions for cursor placement and hit testing.
+    /// Returns None if the text ID is invalid or no layout has been computed.
+    pub fn get_text_char_positions(&self, id: TextId) -> Option<Vec<TextCharPosition>> {
+        let text = self.texts.get(id as usize)?.as_ref()?;
+        let layout = text.cached_layout.as_ref()?;
+        Some(layout.char_positions.clone())
+    }
+
+    /// Hit-test: which character is at world-coordinate (x, y)?
+    /// Returns (char_index, line_index) or None.
+    pub fn get_text_hit(&self, id: TextId, wx: f32, wy: f32) -> Option<(u32, u32)> {
+        let text = self.texts.get(id as usize)?.as_ref()?;
+        let layout = text.cached_layout.as_ref()?;
+        let tx = wx - text.position.x;
+        let ty = wy - text.position.y;
+
+        let mut best_idx = None;
+        let mut best_dist2 = f32::MAX;
+
+        for pos in &layout.char_positions {
+            let cx = pos.x + pos.w * 0.5;
+            let cy = pos.y;
+            let dx = tx - cx;
+            let dy = ty - cy;
+            let d2 = dx * dx + dy * dy;
+            if d2 < best_dist2 {
+                best_dist2 = d2;
+                best_idx = Some((pos.char_index, pos.line_index));
+            }
+        }
+
+        best_idx
+    }
+
+    /// Get selection highlight rectangles for a character range.
+    /// Returns None if the text ID is invalid or no layout exists.
+    pub fn get_text_selection_bounds(&self, id: TextId, start: u32, end: u32) -> Option<Vec<[f32; 4]>> {
+        let text = self.texts.get(id as usize)?.as_ref()?;
+        let layout = text.cached_layout.as_ref()?;
+        let (start, end) = (start.min(end), start.max(end));
+
+        let line_height = text.cached_metrics.as_ref()
+            .map(|m| m.line_height)
+            .unwrap_or(text.style.font_size * text.style.line_height);
+
+        let mut rects = Vec::new();
+        for pos in &layout.char_positions {
+            if pos.char_index >= start && pos.char_index < end {
+                let x = text.position.x + pos.x;
+                let y = text.position.y + pos.y - text.style.font_size * text.style.line_height;
+                rects.push([x, y, pos.w, line_height]);
+            }
+        }
+        Some(rects)
     }
 }

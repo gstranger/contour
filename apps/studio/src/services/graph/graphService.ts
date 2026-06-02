@@ -121,13 +121,18 @@ export class GraphService {
       return edge;
     });
 
-    const regions = this.graph.get_regions().map((region) => ({
-      key: region.key,
-      area: region.area,
-      filled: region.filled,
-      color: region.color,
-      points: [...region.points],
-    }));
+    // get_regions returns each region as a JS Map (serde_wasm_bindgen default
+    // for serde_json::Value::Object), so use Map.get() to read fields.
+    const regions = (this.graph.get_regions() as Map<string, unknown>[]).map((region) => {
+      const points = region.get("points") as ArrayLike<number> | undefined;
+      return {
+        key: region.get("key") as number,
+        area: region.get("area") as number,
+        filled: region.get("filled") as boolean,
+        color: region.get("color") as [number, number, number, number] | undefined,
+        points: points ? Array.from(points) : [],
+      };
+    });
 
     return {
       geomVersion: this.graph.geom_version(),

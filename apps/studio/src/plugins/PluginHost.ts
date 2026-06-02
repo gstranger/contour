@@ -160,6 +160,20 @@ export class PluginHost {
     tool?.plugin.renderOverlay?.(ctx, width, height);
   }
 
+  /**
+   * Render overlays for every registered tool. Used for ambient overlays like
+   * grid-snap that should remain visible regardless of which tool is active.
+   */
+  renderAllOverlays(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+  ): void {
+    for (const entry of this.getTools()) {
+      entry.plugin.renderOverlay?.(ctx, width, height);
+    }
+  }
+
   /** Simple typed event emitter for plugin ↔ host communication */
   on(event: string, handler: Listener): () => void {
     if (!this.listeners.has(event)) {

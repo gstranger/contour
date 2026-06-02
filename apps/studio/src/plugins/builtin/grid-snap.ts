@@ -5,30 +5,29 @@ import type { ToolPlugin, PluginPointerEvent, ToolResult } from "../types";
 const DEFAULT_GRID_SIZE = 20;
 const GRID_COLOR = "rgba(16, 94, 66, 0.08)";
 
-interface GridSnapState {
-  gridSize: number;
-  enabled: boolean;
-}
+/**
+ * Shared grid-snap state, persisted across tool switches so the grid stays
+ * visible and other tools can read `enabled` to decide whether to snap.
+ */
+export const gridSnapState = {
+  gridSize: DEFAULT_GRID_SIZE,
+  enabled: false,
+};
 
 export function createGridSnapPlugin(): ToolPlugin {
-  const state: GridSnapState = {
-    gridSize: DEFAULT_GRID_SIZE,
-    enabled: false,
-  };
-
   return {
     id: "builtin.grid-snap",
     name: "Grid Snap",
     keyboardShortcut: "G",
 
     renderOverlay(ctx: CanvasRenderingContext2D, width: number, height: number) {
-      if (!state.enabled) return;
+      if (!gridSnapState.enabled) return;
 
       ctx.save();
       ctx.strokeStyle = GRID_COLOR;
       ctx.lineWidth = 0.5;
 
-      const size = state.gridSize;
+      const size = gridSnapState.gridSize;
       for (let x = 0; x <= width; x += size) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
@@ -45,26 +44,22 @@ export function createGridSnapPlugin(): ToolPlugin {
       ctx.restore();
     },
 
+    // Clicking grid-snap toggles the grid on/off. Other tools deactivating us
+    // must not clear `enabled` — the grid is a global toggle, not tied to
+    // whichever tool happens to be active.
     onActivate() {
-      state.enabled = !state.enabled;
-    },
-
-    onDeactivate() {
-      // Grid stays visible when tool is deselected via toggle.
-      // It only clears on next activate (toggle off).
+      gridSnapState.enabled = !gridSnapState.enabled;
     },
 
     onPointerDown(_event: PluginPointerEvent): ToolResult {
-      // Grid snap is a pass-through: it doesn't consume pointer events.
-      // Other tools check the grid state and snap coordinates.
       return { action: "repaint" };
     },
   };
 }
 
-/** Utility function: snap a coordinate to the grid if the plugin is active */
+/** Snap (x, y) to the grid using the current grid size. */
 export function snapToGrid(x: number, y: number, gridSize?: number): { x: number; y: number } {
-  const size = gridSize ?? DEFAULT_GRID_SIZE;
+  const size = gridSize ?? gridSnapState.gridSize;
   return {
     x: Math.round(x / size) * size,
     y: Math.round(y / size) * size,

@@ -1,6 +1,7 @@
 // apps/studio/src/plugins/builtin/shape-primitives.ts
 
 import type { ToolPlugin, ToolContext, PluginPointerEvent, ToolResult } from "../types";
+import { gridSnapState, snapToGrid } from "./grid-snap";
 
 type ShapeMode = "rectangle" | "ellipse" | "polygon";
 
@@ -42,8 +43,11 @@ function createShapeTool(mode: ShapeMode, name: string, shortcut: string): ToolP
 
     onPointerDown(event: PluginPointerEvent): ToolResult {
       state.dragging = true;
-      state.startX = event.x;
-      state.startY = event.y;
+      const start = gridSnapState.enabled
+        ? snapToGrid(event.x, event.y)
+        : { x: event.x, y: event.y };
+      state.startX = start.x;
+      state.startY = start.y;
       return { action: "repaint" };
     },
 
@@ -62,10 +66,13 @@ function createShapeTool(mode: ShapeMode, name: string, shortcut: string): ToolP
       if (!state.dragging) return null;
       state.dragging = false;
 
-      const x1 = Math.min(state.startX, event.x);
-      const y1 = Math.min(state.startY, event.y);
-      const x2 = Math.max(state.startX, event.x);
-      const y2 = Math.max(state.startY, event.y);
+      const end = gridSnapState.enabled
+        ? snapToGrid(event.x, event.y)
+        : { x: event.x, y: event.y };
+      const x1 = Math.min(state.startX, end.x);
+      const y1 = Math.min(state.startY, end.y);
+      const x2 = Math.max(state.startX, end.x);
+      const y2 = Math.max(state.startY, end.y);
       const w = x2 - x1;
       const h = y2 - y1;
 

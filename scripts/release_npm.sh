@@ -56,7 +56,9 @@ update_js_import() {
   local file="$1"
   local wasm_name="$2"
   if [[ -f "$file" ]]; then
-    perl -0pi -e 's/contour_bg\.wasm/'"$wasm_name"'/g' "$file"
+    # wasm-pack emits either contour_bg.wasm (with --out-name contour) or
+    # contour_wasm_bg.wasm (derived from the crate name) depending on version.
+    perl -0pi -e 's/contour(?:_wasm)?_bg\.wasm/'"$wasm_name"'/g' "$file"
   fi
 }
 

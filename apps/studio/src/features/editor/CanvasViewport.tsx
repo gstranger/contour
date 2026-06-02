@@ -143,8 +143,9 @@ export function CanvasViewport({
         }
       });
 
-      // Plugin overlay (grid snap, freehand preview, etc.)
-      host.renderToolOverlay(ctx, width, height);
+      // Render every plugin's overlay so ambient ones (grid-snap) stay
+      // visible even when a different tool is active.
+      host.renderAllOverlays(ctx, width, height);
     };
 
     resize();

@@ -2524,6 +2524,187 @@ impl Graph {
         )
     }
 
+    // ========== Text Metrics & Layout ==========
+
+    /// Poll whether a text element needs JS-side font measurement.
+    /// Returns null if text ID is invalid, or { needs_measure, content, style, ... }
+    pub fn measure_text(&self, id: u32) -> JsValue {
+        match self.inner.measure_text(id) {
+            Some(result) => serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL),
+            None => JsValue::NULL,
+        }
+    }
+
+    pub fn measure_text_res(&self, id: u32) -> JsValue {
+        match self.inner.measure_text(id) {
+            Some(result) => {
+                error::ok(serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL))
+            }
+            None => error::invalid_id("text", id),
+        }
+    }
+
+    /// Store JS-measured text metrics. metrics: { char_widths: number[], line_height, ascent, descent, total_width }
+    pub fn set_text_metrics(&mut self, id: u32, metrics: &JsValue) -> bool {
+        let m: contour::model::TextMetrics = match serde_wasm_bindgen::from_value(metrics.clone()) {
+            Ok(m) => m,
+            Err(_) => return false,
+        };
+        self.inner.set_text_metrics(id, m)
+    }
+
+    pub fn set_text_metrics_res(&mut self, id: u32, metrics: &JsValue) -> JsValue {
+        let m: contour::model::TextMetrics = match serde_wasm_bindgen::from_value(metrics.clone()) {
+            Ok(m) => m,
+            Err(e) => return error::err("invalid_metrics", format!("{}", e), None),
+        };
+        if self.inner.set_text_metrics(id, m) {
+            error::ok(JsValue::from_bool(true))
+        } else {
+            error::invalid_id("text", id)
+        }
+    }
+
+    /// Get per-character positions for cursor/selection. Returns [{x, y, w, char_index, line_index}, ...] or null.
+    pub fn get_text_char_positions(&self, id: u32) -> JsValue {
+        match self.inner.get_text_char_positions(id) {
+            Some(positions) => serde_wasm_bindgen::to_value(&positions).unwrap_or(JsValue::NULL),
+            None => JsValue::NULL,
+        }
+    }
+
+    pub fn get_text_char_positions_res(&self, id: u32) -> JsValue {
+        match self.inner.get_text_char_positions(id) {
+            Some(positions) => {
+                error::ok(serde_wasm_bindgen::to_value(&positions).unwrap_or(JsValue::NULL))
+            }
+            None => error::invalid_id("text", id),
+        }
+    }
+
+    /// Hit-test: which character at (x, y)? Returns [char_index, line_index] or null.
+    pub fn get_text_hit(&self, id: u32, x: f32, y: f32) -> JsValue {
+        match self.inner.get_text_hit(id, x, y) {
+            Some((ci, li)) => {
+                let arr = js_sys::Array::new();
+                arr.push(&JsValue::from_f64(ci as f64));
+                arr.push(&JsValue::from_f64(li as f64));
+                arr.into()
+            }
+            None => JsValue::NULL,
+        }
+    }
+
+    pub fn get_text_hit_res(&self, id: u32, x: f32, y: f32) -> JsValue {
+        if !x.is_finite() {
+            return error::non_finite("x");
+        }
+        if !y.is_finite() {
+            return error::non_finite("y");
+        }
+        match self.inner.get_text_hit(id, x, y) {
+            Some((ci, li)) => {
+                let arr = js_sys::Array::new();
+                arr.push(&JsValue::from_f64(ci as f64));
+                arr.push(&JsValue::from_f64(li as f64));
+                error::ok(arr.into())
+            }
+            None => {
+                if self.inner.get_text(id).is_some() {
+                    error::err("no_layout", "text has not been measured yet", None)
+                } else {
+                    error::invalid_id("text", id)
+                }
+            }
+        }
+    }
+
+    /// Get selection highlight rectangles for a character range. Returns [[x, y, w, h], ...] or null.
+    pub fn get_text_selection_bounds(&self, id: u32, start: u32, end: u32) -> JsValue {
+        match self.inner.get_text_selection_bounds(id, start, end) {
+            Some(bounds) => {
+                let arr = js_sys::Array::new();
+                for b in bounds {
+                    let sub = js_sys::Array::new();
+                    sub.push(&JsValue::from_f64(b[0] as f64));
+                    sub.push(&JsValue::from_f64(b[1] as f64));
+                    sub.push(&JsValue::from_f64(b[2] as f64));
+                    sub.push(&JsValue::from_f64(b[3] as f64));
+                    arr.push(&sub);
+                }
+                arr.into()
+            }
+            None => JsValue::NULL,
+        }
+    }
+
+    pub fn get_text_selection_bounds_res(&self, id: u32, start: u32, end: u32) -> JsValue {
+        match self.inner.get_text_selection_bounds(id, start, end) {
+            Some(bounds) => {
+                let arr = js_sys::Array::new();
+                for b in bounds {
+                    let sub = js_sys::Array::new();
+                    sub.push(&JsValue::from_f64(b[0] as f64));
+                    sub.push(&JsValue::from_f64(b[1] as f64));
+                    sub.push(&JsValue::from_f64(b[2] as f64));
+                    sub.push(&JsValue::from_f64(b[3] as f64));
+                    arr.push(&sub);
+                }
+                error::ok(arr.into())
+            }
+            None => {
+                if self.inner.get_text(id).is_some() {
+                    error::err("no_layout", "text has not been measured yet", None)
+                } else {
+                    error::invalid_id("text", id)
+                }
+            }
+        }
+    }
+
+    /// Get a point and tangent angle at a specific distance along a chain of edges.
+    /// edge_ids: Uint32Array; distance: f32. Returns { x, y, angle } or null.
+    pub fn sample_path_point(&self, edge_ids: &Uint32Array, distance: f32) -> JsValue {
+        let mut ids = vec![0u32; edge_ids.length() as usize];
+        edge_ids.copy_to(&mut ids);
+        match contour::geometry::path_length::sample_path_point(&self.inner, &ids, distance) {
+            Some(pt) => {
+                let obj = crate::interop::new_obj();
+                crate::interop::set_kv(&obj, "x", &JsValue::from_f64(pt.x as f64));
+                crate::interop::set_kv(&obj, "y", &JsValue::from_f64(pt.y as f64));
+                crate::interop::set_kv(&obj, "angle", &JsValue::from_f64(pt.angle as f64));
+                obj.into()
+            }
+            None => JsValue::NULL,
+        }
+    }
+
+    pub fn sample_path_point_res(&self, edge_ids: &Uint32Array, distance: f32) -> JsValue {
+        if !distance.is_finite() {
+            return error::non_finite("distance");
+        }
+        if distance < 0.0 {
+            return error::out_of_range("distance", 0.0, f32::INFINITY, distance);
+        }
+        let mut ids = vec![0u32; edge_ids.length() as usize];
+        edge_ids.copy_to(&mut ids);
+        for &id in &ids {
+            if !edge_exists(&self.inner, id) {
+                return error::invalid_id("edge", id);
+            }
+        }
+        match contour::geometry::path_length::sample_path_point(&self.inner, &ids, distance) {
+            Some(pt) => {
+                let obj = crate::interop::new_obj();
+                crate::interop::set_kv(&obj, "x", &JsValue::from_f64(pt.x as f64));
+                crate::interop::set_kv(&obj, "y", &JsValue::from_f64(pt.y as f64));
+                crate::interop::set_kv(&obj, "angle", &JsValue::from_f64(pt.angle as f64));
+                error::ok(obj.into())
+            }
+            None => error::err("out_of_range", "distance exceeds path length", None),
+        }
+    }
+
     // ========== Effects System ==========
 
     /// Add a drop shadow effect, returns effect ID

@@ -41,9 +41,11 @@ export class PluginHost {
     }
     this.manifests.delete(id);
     this.toolCache = null;
+    const toDelete: string[] = [];
     for (const [toolId, ownerId] of this.toolOwner) {
-      if (ownerId === id) this.toolOwner.delete(toolId);
+      if (ownerId === id) toDelete.push(toolId);
     }
+    for (const toolId of toDelete) this.toolOwner.delete(toolId);
   }
 
   /** All registered tools across all manifests */
@@ -75,12 +77,16 @@ export class PluginHost {
     return result;
   }
 
-  activateTool(id: string): void {
-    if (this.activeToolId === id) return;
+  /** Activate a tool by id. Returns false if the tool is not registered. */
+  activateTool(id: string): boolean {
+    if (this.activeToolId === id) return true;
+    const exists = this.getTools().some((t) => t.id === id);
+    if (!exists) return false;
     const prev = this.getActiveTool();
     if (prev) prev.plugin.onDeactivate?.();
     this.activeToolId = id;
     this.emit("toolChanged", this.getActiveTool() ?? null);
+    return true;
   }
 
   /** Notify the active tool of its activation context. Called by the React hook. */

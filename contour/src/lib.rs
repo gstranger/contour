@@ -1743,6 +1743,45 @@ impl Graph {
     fn bump(&mut self) {
         self.geom_ver = self.geom_ver.wrapping_add(1);
     }
+
+    // --- Undo group lifecycle ---
+
+    /// Begin a new undo group. If a group is already open (depth > 0),
+    /// this is a no-op except for incrementing the depth counter.
+    /// The label is used when presenting the undo step to the UI.
+    pub fn begin_undo_group(&mut self, label: String) {
+        self.undo_group_depth += 1;
+        if self.undo_group_depth == 1 {
+            self.current_undo_label = Some(label);
+            self.current_snapshot = Some(crate::undo::SnapshotBatch::new());
+        }
+    }
+
+    /// End the current undo group. When the outermost group closes
+    /// (depth reaches 0), the accumulated snapshot is committed to
+    /// the undo stack and the redo stack is cleared.
+    /// Returns true if a group was committed, false if no group was open
+    /// or a nested group simply decremented.
+    pub fn end_undo_group(&mut self) -> bool {
+        if self.undo_group_depth == 0 {
+            return false;
+        }
+        self.undo_group_depth -= 1;
+        if self.undo_group_depth == 0 {
+            let label = self.current_undo_label.take().unwrap_or_default();
+            if let Some(snapshot) = self.current_snapshot.take() {
+                if !snapshot.is_empty() {
+                    self.redo_stack.clear();
+                    self.undo_stack.push(crate::undo::UndoEntry {
+                        label,
+                        action: crate::undo::UndoAction::Snapshot(snapshot),
+                    });
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 // Layer and group management

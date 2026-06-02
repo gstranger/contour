@@ -3257,6 +3257,33 @@
       document.getElementById('diffBtn').addEventListener('click', () => doBooleanOp('difference'));
       document.getElementById('xorBtn').addEventListener('click', () => doBooleanOp('xor'));
 
+      // Undo/redo keyboard shortcuts
+      document.addEventListener("keydown", (e) => {
+        if (state.textInputActive) return;
+        if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+          e.preventDefault();
+          try {
+            const r = g.undo_res();
+            const parsed = JSON.parse(JSON.stringify(r));
+            if (parsed.ok) {
+              scheduleRegions();
+              render();
+            }
+          } catch (err) { console.warn("undo failed", err); }
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) {
+          e.preventDefault();
+          try {
+            const r = g.redo_res();
+            const parsed = JSON.parse(JSON.stringify(r));
+            if (parsed.ok) {
+              scheduleRegions();
+              render();
+            }
+          } catch (err) { console.warn("redo failed", err); }
+        }
+      });
+
       render();
     </script>
   </body>

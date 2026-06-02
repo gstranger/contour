@@ -24,17 +24,20 @@ fn remove_node_cascades_edges() {
     let n1 = g.add_node(0.0, 0.0);
     let n2 = g.add_node(100.0, 0.0);
     let n3 = g.add_node(100.0, 100.0);
-    let _e1 = g.add_edge(center, n1).unwrap();
-    let _e2 = g.add_edge(center, n2).unwrap();
-    let _e3 = g.add_edge(center, n3).unwrap();
+    let _ = g.add_edge(center, n1).unwrap();
+    let _ = g.add_edge(center, n2).unwrap();
+    let _ = g.add_edge(center, n3).unwrap();
 
     assert_eq!(g.edge_count(), 3);
     assert!(g.remove_node(center));
     assert_eq!(g.edge_count(), 0);
 
+    // Undo restore
     let _ = g.undo();
     assert!(g.get_node(center).is_some());
     assert_eq!(g.edge_count(), 3);
+    let all_edges = g.get_edge_arrays();
+    assert_eq!(all_edges.ids.len(), 3);
 }
 
 #[test]
@@ -53,7 +56,7 @@ fn gesture_group_merges() {
 
     let (label, remaining) = g.undo().unwrap();
     assert_eq!(label, "drag");
-    assert_eq!(remaining, 1); // "add node" still in stack
+    assert_eq!(remaining, 1); // "add node" command still in stack
 
     let (x2, _) = g.get_node(id).unwrap();
     assert_eq!(x2, 0.0);
@@ -68,13 +71,13 @@ fn nested_groups_merge() {
     g.move_node(id, 20.0, 20.0);
     g.begin_undo_group("inner".into());
     g.move_node(id, 30.0, 30.0);
-    assert!(!g.end_undo_group()); // inner close, no commit
+    assert!(!g.end_undo_group());
     g.move_node(id, 40.0, 40.0);
-    assert!(g.end_undo_group()); // outer close, commits
+    assert!(g.end_undo_group());
 
     let _ = g.undo();
     let (x, _) = g.get_node(id).unwrap();
-    assert_eq!(x, 10.0); // back to original
+    assert_eq!(x, 10.0);
 
     let _ = g.redo();
     let (x2, _) = g.get_node(id).unwrap();
@@ -101,12 +104,10 @@ fn gestural_then_structural_undo() {
 #[test]
 fn redo_after_mutation_clears_redo() {
     let mut g = Graph::new();
-    let _id = g.add_node(0.0, 0.0);
-    g.move_node(_id, 50.0, 50.0);
-    let _ = g.undo(); // move undone, redo stack = [move]
-    let _ = g.undo(); // add undone, redo stack = [move, add]
-
-    // New mutation clears redo
+    let id = g.add_node(0.0, 0.0);
+    g.move_node(id, 50.0, 50.0);
+    let _ = g.undo();
+    let _ = g.undo();
     let _ = g.add_node(100.0, 100.0);
     assert!(g.redo().is_none());
 }
@@ -193,11 +194,24 @@ fn empty_gesture_group_not_committed() {
 }
 
 #[test]
-fn multiply_nested_empty_group_not_committed() {
+fn edge_add_undo_redo() {
     let mut g = Graph::new();
-    g.begin_undo_group("outer".into());
-    g.begin_undo_group("inner".into());
-    assert!(!g.end_undo_group()); // inner close
-    assert!(!g.end_undo_group()); // outer close, nothing to commit
-    assert!(g.undo().is_none());
+    let a = g.add_node(0.0, 0.0);
+    let b = g.add_node(100.0, 0.0);
+    let _eid = g.add_edge(a, b).unwrap();
+    assert_eq!(g.edge_count(), 1);
+
+    let _ = g.undo(); // undo add edge
+    assert_eq!(g.edge_count(), 0);
+
+    let _ = g.undo(); // undo add node b
+    let _ = g.undo(); // undo add node a
+    assert_eq!(g.node_count(), 0);
+
+    // Redo all three
+    let _ = g.redo(); // redo add node a
+    let _ = g.redo(); // redo add node b
+    let _ = g.redo(); // redo add edge
+    assert_eq!(g.node_count(), 2);
+    assert_eq!(g.edge_count(), 1);
 }

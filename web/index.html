@@ -944,13 +944,11 @@
                 const fontWeight = style.font_weight || 400;
                 const fontFamily = style.font_family || 'sans-serif';
 
-                // Ensure metrics are fresh for editing text
-                if (isEditing) {
-                  const measureResult = g.measure_text(tid);
-                  if (measureResult && measureResult.needs_measure) {
-                    const metrics = fontProvider.measure(measureResult.content, measureResult.style);
-                    g.set_text_metrics(tid, metrics);
-                  }
+                // Ensure metrics are fresh for any text that needs measurement
+                const measureResult = g.measure_text(tid);
+                if (measureResult && measureResult.needs_measure) {
+                  const metrics = fontProvider.measure(measureResult.content, measureResult.style);
+                  g.set_text_metrics(tid, metrics);
                 }
 
                 ctx.save();
@@ -1690,49 +1688,58 @@
 
         // Text tool: click to add text or select existing text
         if (state.textMode) {
-          // Check if clicking on existing text
           let clickedText = null;
           try {
             if (typeof g.get_text_ids === 'function') {
               const textIds = g.get_text_ids();
               for (let i = 0; textIds && i < textIds.length; i++) {
                 const tid = textIds[i];
-                const tdata = g.get_text(tid);
-                if (!tdata) continue;
-                // Simple bbox hit test
-                const tx = tdata.position ? tdata.position.x : 0;
-                const ty = tdata.position ? tdata.position.y : 0;
-                const style = tdata.style || {};
-                const fs = style.font_size || 16;
-                ctx.font = `${style.font_weight || 400} ${fs}px ${style.font_family || 'sans-serif'}`;
-                const tw = ctx.measureText(tdata.content || '').width;
-                if (x >= tx - 5 && x <= tx + tw + 5 && y >= ty - 5 && y <= ty + fs + 5) {
-                  clickedText = tid;
-                  break;
-                }
+                const thit = g.get_text_hit(tid, x, y);
+                if (thit) { clickedText = tid; break; }
               }
             }
           } catch (e) { console.warn('Text hit test error:', e); }
 
           if (clickedText !== null) {
-            // Select existing text
+            // Click on existing text in text mode → enter editing immediately
+            textEditor.edit(clickedText);
+            textEditor.onMouseDown(x, y);
             state.selection = { kind: 'text', id: clickedText };
-            refreshTextPropertiesPanel();
             updateModeLabel();
             render();
           } else {
-            // Add new text at click position
+            // Click on empty canvas in text mode → create new text and enter editing
             const defaultText = 'Text';
             if (typeof g.add_text === 'function') {
               const newId = g.add_text(defaultText, x, y);
+              textEditor.edit(newId);
+              textEditor.onMouseDown(x, y);
               state.selection = { kind: 'text', id: newId };
-              refreshTextPropertiesPanel();
               updateModeLabel();
               render();
-              console.log('Added text at', x, y, 'id:', newId);
             }
           }
           return;
+        }
+
+        // Check if clicking on text (after pick logic, before other handling)
+        if (!pick && !state.textMode && !state.bend && !state.bucket && !state.pen && !state.rectMode && !state.ellipseMode && !state.polygonMode && !state.starMode) {
+          const textIds = g.get_text_ids();
+          let hitText = false;
+          for (const tid of textIds) {
+            const thit = g.get_text_hit(tid, x, y);
+            if (thit) {
+              textEditor.select(tid);
+              state.selection = { kind: 'text', id: tid };
+              hitText = true;
+              break;
+            }
+          }
+          if (hitText) {
+            updateModeLabel();
+            render();
+            return;
+          }
         }
 
         if (pick && pick.kind === 'node') {
@@ -1795,6 +1802,22 @@
           state.selection = null;
           state.dragging = null;
         }
+
+        // Click-away: deselect text if clicking elsewhere
+        if (textEditor.state !== 'idle' && !pick) {
+          const textIdsAway = g.get_text_ids();
+          let hitTextAway = false;
+          for (const tid of textIdsAway) {
+            const thit = g.get_text_hit(tid, x, y);
+            if (thit) { hitTextAway = true; break; }
+          }
+          if (!hitTextAway) {
+            textEditor.deselect();
+            state.selection = null;
+            updateModeLabel();
+          }
+        }
+
         render();
       });
 
@@ -2377,7 +2400,6 @@
           // Redo handled by separate engine undo handler below — skip
         } else if (mod && evt.key.toLowerCase() === 'z') {
           // Undo handled by separate engine undo handler below — skip
-        }
         } else if (evt.key.toLowerCase() === 's') {
           state.snap = !state.snap; updateSnapLabel(); render();
         } else if (evt.key.toLowerCase() === 'f') {

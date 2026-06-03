@@ -3765,19 +3765,7 @@ impl Graph {
     /// Returns `needs_measure: false` with cached metrics if still fresh.
     pub fn measure_text(&self, id: TextId) -> Option<TextMeasureResult> {
         let text = self.texts.get(id as usize)?.as_ref()?;
-        if text.cached_metrics.is_none() {
-            Some(TextMeasureResult {
-                needs_measure: true,
-                content: text.content.clone(),
-                style: text.style.clone(),
-                char_widths: Vec::new(),
-                line_height: 0.0,
-                ascent: 0.0,
-                descent: 0.0,
-                total_width: 0.0,
-            })
-        } else {
-            let m = text.cached_metrics.as_ref().unwrap();
+        if let Some(m) = &text.cached_metrics {
             Some(TextMeasureResult {
                 needs_measure: false,
                 content: String::new(),
@@ -3787,6 +3775,17 @@ impl Graph {
                 ascent: m.ascent,
                 descent: m.descent,
                 total_width: m.total_width,
+            })
+        } else {
+            Some(TextMeasureResult {
+                needs_measure: true,
+                content: text.content.clone(),
+                style: text.style.clone(),
+                char_widths: Vec::new(),
+                line_height: 0.0,
+                ascent: 0.0,
+                descent: 0.0,
+                total_width: 0.0,
             })
         }
     }

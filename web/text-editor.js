@@ -179,16 +179,24 @@ export class TextEditor {
           event.preventDefault();
           this.cursorPosition = 0;
           this.selectionAnchor = chars.length;
+        } else if (!this.composing) {
+          event.preventDefault();
+          insert(event.key);
         }
         break;
 
       case 'c':
       case 'x':
-        if (metaOrCtrl && hasSelection) {
+        if (metaOrCtrl) {
+          if (hasSelection) {
+            event.preventDefault();
+            const selected = chars.slice(selStart, selEnd).join('');
+            navigator.clipboard.writeText(selected).catch(() => {});
+            if (event.key === 'x') { insert(''); }
+          }
+        } else if (!this.composing) {
           event.preventDefault();
-          const selected = chars.slice(selStart, selEnd).join('');
-          navigator.clipboard.writeText(selected).catch(() => {});
-          if (event.key === 'x') { insert(''); }
+          insert(event.key);
         }
         break;
 
@@ -200,6 +208,9 @@ export class TextEditor {
               insert(text);
             }
           }).catch(() => {});
+        } else if (!this.composing) {
+          event.preventDefault();
+          insert(event.key);
         }
         break;
 

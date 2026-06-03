@@ -30,8 +30,8 @@ use model::{
     Color, ColorStop, DropShadow, Edge, EdgeKind, Effect, EffectId, EffectStack, FillRule,
     FillState, FontStyle, Gradient, GradientId, GradientUnits, HandleMode, LayerId, LinearGradient,
     Node, PrimitiveResult, RadialGradient, Shape, SpreadMethod, TextAlign, TextCacheLayout,
-    TextCharPosition, TextElement, TextId, TextMeasureResult, TextMetrics, TextOverflow,
-    TextStyle, TextType, Vec2, VerticalAlign,
+    TextCharPosition, TextElement, TextId, TextMeasureResult, TextMetrics, TextOverflow, TextStyle,
+    TextType, Vec2, VerticalAlign,
 };
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -429,9 +429,10 @@ impl Graph {
             self.redo_stack.clear();
             self.undo_stack.push(crate::undo::UndoEntry {
                 label: "add node".into(),
-                action: crate::undo::UndoAction::Command(
-                    crate::undo::UndoCommand::AddNode { id, pos: (x, y) },
-                ),
+                action: crate::undo::UndoAction::Command(crate::undo::UndoCommand::AddNode {
+                    id,
+                    pos: (x, y),
+                }),
             });
         }
 
@@ -520,13 +521,11 @@ impl Graph {
             self.redo_stack.clear();
             self.undo_stack.push(crate::undo::UndoEntry {
                 label: "remove node".into(),
-                action: crate::undo::UndoAction::Command(
-                    crate::undo::UndoCommand::RemoveNode {
-                        id,
-                        pos: (nx, ny),
-                        incident: incident_edges_with_state,
-                    },
-                ),
+                action: crate::undo::UndoAction::Command(crate::undo::UndoCommand::RemoveNode {
+                    id,
+                    pos: (nx, ny),
+                    incident: incident_edges_with_state,
+                }),
             });
         }
 
@@ -590,14 +589,12 @@ impl Graph {
             self.redo_stack.clear();
             self.undo_stack.push(crate::undo::UndoEntry {
                 label: "add edge".into(),
-                action: crate::undo::UndoAction::Command(
-                    crate::undo::UndoCommand::AddEdge {
-                        id,
-                        a,
-                        b,
-                        edge: edge_snapshot.unwrap(),
-                    },
-                ),
+                action: crate::undo::UndoAction::Command(crate::undo::UndoCommand::AddEdge {
+                    id,
+                    a,
+                    b,
+                    edge: edge_snapshot.unwrap(),
+                }),
             });
         }
 
@@ -2022,7 +2019,12 @@ impl Graph {
             crate::undo::UndoCommand::AddEdge { id, .. } => {
                 self.edges[*id as usize] = None;
             }
-            crate::undo::UndoCommand::RemoveEdge { id, endpoint_a: _, endpoint_b: _, edge } => {
+            crate::undo::UndoCommand::RemoveEdge {
+                id,
+                endpoint_a: _,
+                endpoint_b: _,
+                edge,
+            } => {
                 if (*id as usize) >= self.edges.len() {
                     self.edges.resize(*id as usize + 1, None);
                 }
@@ -2075,7 +2077,12 @@ impl Graph {
                     self.edges[eid] = None;
                 }
             }
-            crate::undo::UndoCommand::AddEdge { id, a: _, b: _, edge } => {
+            crate::undo::UndoCommand::AddEdge {
+                id,
+                a: _,
+                b: _,
+                edge,
+            } => {
                 if (*id as usize) >= self.edges.len() {
                     self.edges.resize(*id as usize + 1, None);
                 }
@@ -2111,7 +2118,10 @@ impl Graph {
         }
     }
 
-    fn capture_snapshot_from(&self, source: &crate::undo::SnapshotBatch) -> crate::undo::SnapshotBatch {
+    fn capture_snapshot_from(
+        &self,
+        source: &crate::undo::SnapshotBatch,
+    ) -> crate::undo::SnapshotBatch {
         let mut snap = crate::undo::SnapshotBatch::new();
         for &(id, _) in &source.nodes {
             let state = self.nodes.get(id as usize).and_then(|n| *n);
@@ -3809,7 +3819,11 @@ impl Graph {
                 let y = metrics.ascent;
 
                 for (i, _ch) in chars.iter().enumerate() {
-                    let w = metrics.char_widths.get(i).copied().unwrap_or(metrics.line_height * 0.5);
+                    let w = metrics
+                        .char_widths
+                        .get(i)
+                        .copied()
+                        .unwrap_or(metrics.line_height * 0.5);
                     char_positions.push(TextCharPosition {
                         x,
                         y,
@@ -3820,7 +3834,12 @@ impl Graph {
                     x += w + letter_spacing_px;
                 }
             }
-            TextType::Box { width, height, vertical_align, overflow: _overflow } => {
+            TextType::Box {
+                width,
+                height,
+                vertical_align,
+                overflow: _overflow,
+            } => {
                 use crate::algorithms::text_layout::layout_text_box;
                 let layout = layout_text_box(
                     &text.content,
@@ -3836,7 +3855,8 @@ impl Graph {
                 for (line_num, line) in layout.lines.iter().enumerate() {
                     let mut x = line.x_offset;
                     for _ch in line.text.chars() {
-                        let w = metrics.char_widths
+                        let w = metrics
+                            .char_widths
                             .get(char_idx as usize)
                             .copied()
                             .unwrap_or(metrics.line_height * 0.5);
@@ -3858,7 +3878,11 @@ impl Graph {
                 let mut x = 0.0f32;
                 let y = metrics.ascent;
                 for (i, _ch) in chars.iter().enumerate() {
-                    let w = metrics.char_widths.get(i).copied().unwrap_or(metrics.line_height * 0.5);
+                    let w = metrics
+                        .char_widths
+                        .get(i)
+                        .copied()
+                        .unwrap_or(metrics.line_height * 0.5);
                     char_positions.push(TextCharPosition {
                         x,
                         y,
@@ -3912,12 +3936,19 @@ impl Graph {
 
     /// Get selection highlight rectangles for a character range.
     /// Returns None if the text ID is invalid or no layout exists.
-    pub fn get_text_selection_bounds(&self, id: TextId, start: u32, end: u32) -> Option<Vec<[f32; 4]>> {
+    pub fn get_text_selection_bounds(
+        &self,
+        id: TextId,
+        start: u32,
+        end: u32,
+    ) -> Option<Vec<[f32; 4]>> {
         let text = self.texts.get(id as usize)?.as_ref()?;
         let layout = text.cached_layout.as_ref()?;
         let (start, end) = (start.min(end), start.max(end));
 
-        let line_height = text.cached_metrics.as_ref()
+        let line_height = text
+            .cached_metrics
+            .as_ref()
             .map(|m| m.line_height)
             .unwrap_or(text.style.font_size * text.style.line_height);
 

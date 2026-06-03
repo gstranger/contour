@@ -64,14 +64,43 @@ pub(crate) enum UndoAction {
 
 /// Structural commands for inverting creation/destruction.
 pub(crate) enum UndoCommand {
-    AddNode { id: u32, pos: (f32, f32) },
-    RemoveNode { id: u32, pos: (f32, f32), incident: Vec<(u32, Edge)> },
-    AddEdge { id: u32, a: u32, b: u32, edge: Edge },
-    RemoveEdge { id: u32, endpoint_a: u32, endpoint_b: u32, edge: Edge },
-    AddShape { id: u32, shape: Shape },
-    RemoveShape { id: u32, shape: Shape },
-    AddText { id: u32, text: TextElement },
-    RemoveText { id: u32, text: TextElement },
+    AddNode {
+        id: u32,
+        pos: (f32, f32),
+    },
+    RemoveNode {
+        id: u32,
+        pos: (f32, f32),
+        incident: Vec<(u32, Edge)>,
+    },
+    AddEdge {
+        id: u32,
+        a: u32,
+        b: u32,
+        edge: Edge,
+    },
+    RemoveEdge {
+        id: u32,
+        endpoint_a: u32,
+        endpoint_b: u32,
+        edge: Edge,
+    },
+    AddShape {
+        id: u32,
+        shape: Shape,
+    },
+    RemoveShape {
+        id: u32,
+        shape: Shape,
+    },
+    AddText {
+        id: u32,
+        text: TextElement,
+    },
+    RemoveText {
+        id: u32,
+        text: TextElement,
+    },
 }
 
 /// Holds the "before" state of all elements touched during a gesture group.

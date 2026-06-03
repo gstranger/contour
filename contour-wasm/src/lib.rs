@@ -41,13 +41,23 @@ impl Graph {
     pub fn rs_set_text_metrics(&mut self, id: u32, metrics: contour::model::TextMetrics) -> bool {
         self.inner.set_text_metrics(id, metrics)
     }
-    pub fn rs_get_text_char_positions(&self, id: u32) -> Option<Vec<contour::model::TextCharPosition>> {
+    pub fn rs_get_text_char_positions(
+        &self,
+        id: u32,
+    ) -> Option<Vec<contour::model::TextCharPosition>> {
         self.inner.get_text_char_positions(id)
     }
     pub fn rs_get_text_hit(&self, id: u32, x: f32, y: f32) -> Option<Vec<u32>> {
-        self.inner.get_text_hit(id, x, y).map(|(ci, li)| vec![ci, li])
+        self.inner
+            .get_text_hit(id, x, y)
+            .map(|(ci, li)| vec![ci, li])
     }
-    pub fn rs_get_text_selection_bounds(&self, id: u32, start: u32, end: u32) -> Option<Vec<[f32; 4]>> {
+    pub fn rs_get_text_selection_bounds(
+        &self,
+        id: u32,
+        start: u32,
+        end: u32,
+    ) -> Option<Vec<[f32; 4]>> {
         self.inner.get_text_selection_bounds(id, start, end)
     }
     pub fn rs_sample_path_point(

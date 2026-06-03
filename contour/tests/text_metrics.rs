@@ -1,5 +1,5 @@
-use contour::Graph;
 use contour::model::TextMetrics;
+use contour::Graph;
 
 #[test]
 fn test_measure_text_returns_needs_measure_for_new_text() {
@@ -30,7 +30,10 @@ fn test_set_metrics_then_measure_returns_cached() {
     let result = g.measure_text(id);
     assert!(result.is_some());
     let cached = result.unwrap();
-    assert!(!cached.needs_measure, "should be cached after set_text_metrics");
+    assert!(
+        !cached.needs_measure,
+        "should be cached after set_text_metrics"
+    );
     assert_eq!(cached.total_width, 13.0);
 }
 
@@ -53,7 +56,10 @@ fn test_editing_content_invalidates_cache() {
 
     let result = g.measure_text(id);
     assert!(result.is_some());
-    assert!(result.unwrap().needs_measure, "should need re-measure after edit");
+    assert!(
+        result.unwrap().needs_measure,
+        "should need re-measure after edit"
+    );
 }
 
 #[test]
@@ -83,7 +89,10 @@ fn test_get_text_char_positions_after_set_metrics() {
     g.set_text_metrics(id, metrics);
 
     let positions = g.get_text_char_positions(id);
-    assert!(positions.is_some(), "should return positions after set_text_metrics");
+    assert!(
+        positions.is_some(),
+        "should return positions after set_text_metrics"
+    );
     let pos = positions.unwrap();
     assert_eq!(pos.len(), 2);
     assert_eq!(pos[0].char_index, 0);
@@ -195,6 +204,10 @@ fn test_get_text_char_positions_handles_text_box_layout() {
     let positions = g.get_text_char_positions(id);
     assert!(positions.is_some());
     let pos = positions.unwrap();
-    assert_eq!(pos.len(), 2, "text box with 2 chars should have 2 positions");
+    assert_eq!(
+        pos.len(),
+        2,
+        "text box with 2 chars should have 2 positions"
+    );
     assert_eq!(pos[0].line_index, 0);
 }

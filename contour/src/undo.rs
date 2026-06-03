@@ -43,6 +43,7 @@ impl UndoStack {
     }
 
     /// Peek at the top entry's label without removing it.
+    #[allow(dead_code)]
     pub fn top_label(&self) -> Option<&str> {
         self.entries.back().map(|e| e.label.as_str())
     }
@@ -63,6 +64,7 @@ pub(crate) enum UndoAction {
 }
 
 /// Structural commands for inverting creation/destruction.
+#[allow(dead_code)]
 pub(crate) enum UndoCommand {
     AddNode {
         id: u32,

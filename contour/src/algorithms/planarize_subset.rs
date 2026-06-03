@@ -583,7 +583,7 @@ pub fn planarize_subset_with_bbox_guard(
     }
     // Estimate pair budget; bail early if too high (overestimates are fine)
     let mut est_pairs: usize = 0;
-    for (_k, list) in buckets.iter() {
+    for list in buckets.values() {
         let m = list.len();
         if m >= 2 {
             // m choose 2

@@ -1867,6 +1867,7 @@ impl Graph {
         }
     }
 
+    #[allow(dead_code)]
     fn snapshot_shape(&mut self, id: u32) {
         if let Some(ref mut snap) = self.current_snapshot {
             if !snap.shapes.iter().any(|(sid, _)| *sid == id) {
@@ -1876,6 +1877,7 @@ impl Graph {
         }
     }
 
+    #[allow(dead_code)]
     fn snapshot_text(&mut self, id: u32) {
         if let Some(ref mut snap) = self.current_snapshot {
             if !snap.texts.iter().any(|(tid, _)| *tid == id) {

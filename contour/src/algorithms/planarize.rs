@@ -155,7 +155,7 @@ pub fn planarize_graph(g: &Graph) -> Planarized {
     let mut bucket_lists: Vec<Vec<usize>> = Vec::new();
 
     if let Some(plan) = plan_opt {
-        for (_cell, entries) in plan.seg_cells.iter() {
+        for entries in plan.seg_cells.values() {
             let mut list: Vec<usize> = Vec::with_capacity(entries.len());
             for &(eid, seg_idx) in entries {
                 if let Some(&global_idx) = seg_index_map.get(&(eid, seg_idx)) {

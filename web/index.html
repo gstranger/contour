@@ -2372,15 +2372,15 @@
         render();
       }
 
-      // Text editing keyboard events
+      // Text editing keyboard events — capture phase to run before all other handlers
       window.addEventListener('keydown', (evt) => {
         if (textEditor.state === 'editing') {
+          evt.preventDefault();
+          evt.stopImmediatePropagation();
           textEditor.onKeyDown(evt);
-          // Re-render after any edit key
           render();
-          return;
         }
-      });
+      }, true); // ← capture phase
 
       window.addEventListener('keydown', (evt) => {
         const mod = evt.ctrlKey || evt.metaKey;
